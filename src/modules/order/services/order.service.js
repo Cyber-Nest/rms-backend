@@ -814,3 +814,285 @@ exports.getUniqueCustomers = async (filters = {}) => {
     throw error;
   }
 };
+
+// ── Get All Time Reports Summary  ───────
+exports.getReportsSummary = async () => {
+  try {
+    // 1. Fetch products category lookup map
+    const productCategoryMap = {};
+    try {
+      const products = await Product.find()
+        .select("_id categoryId")
+        .populate({ path: "categoryId", select: "name" })
+        .lean();
+      
+      for (const p of products) {
+        const prodId = p._id ? p._id.toString() : "";
+        const catName =
+          p.categoryId && typeof p.categoryId === "object"
+            ? p.categoryId.name
+            : "";
+        if (prodId && catName) {
+          productCategoryMap[prodId] = catName;
+        }
+      }
+    } catch (err) {
+      logger.warn(`Could not build product category lookup for reports: ${err.message}`);
+    }
+
+    // 2. Perform aggregation on Order
+    const [summaryResult] = await Order.aggregate([
+      {
+        $facet: {
+          totals: [
+            {
+              $group: {
+                _id: null,
+                completedCount: {
+                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, 1, 0] }
+                },
+                completedTotal: {
+                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$total", 0] }
+                },
+                cancelledCount: {
+                  $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] }
+                },
+                cancelledTotal: {
+                  $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, "$total", 0] }
+                },
+                grossSubtotal: {
+                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$subtotal", 0] }
+                },
+                grossTax: {
+                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$tax", 0] }
+                },
+                grossDiscount: {
+                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$discount", 0] }
+                },
+                takeoutTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "takeout"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
+                dineInTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "dine-in"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
+                driveThroughTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "drive-through"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
+                onlineTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "online"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
+                posTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "pos"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          payments: [
+            {
+              $match: {
+                status: { $ne: "cancelled" },
+                paymentStatus: "paid"
+              }
+            },
+            {
+              $project: {
+                total: 1,
+                payments: {
+                  $cond: [
+                    { $gt: [{ $size: { $ifNull: ["$payments", []] } }, 0] },
+                    "$payments",
+                    [{ method: "cash", amount: "$total" }]
+                  ]
+                }
+              }
+            },
+            { $unwind: "$payments" },
+            {
+              $group: {
+                _id: "$payments.method",
+                amount: { $sum: "$payments.amount" }
+              }
+            }
+          ],
+          items: [
+            { $match: { status: { $ne: "cancelled" } } },
+            { $unwind: "$items" },
+            {
+              $group: {
+                _id: "$items.menuItemId",
+                total: {
+                  $sum: { $ifNull: ["$items.totalPrice", { $multiply: ["$items.basePrice", "$items.quantity"] }] }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]);
+
+    const totals = summaryResult?.totals?.[0] || {
+      completedCount: 0,
+      completedTotal: 0,
+      cancelledCount: 0,
+      cancelledTotal: 0,
+      grossSubtotal: 0,
+      grossTax: 0,
+      grossDiscount: 0,
+      takeoutTotal: 0,
+      dineInTotal: 0,
+      driveThroughTotal: 0,
+      onlineTotal: 0,
+      posTotal: 0
+    };
+
+    // Calculate category sales using productCategoryMap
+    const categorySalesMap = {};
+    if (summaryResult?.items) {
+      for (const itemGroup of summaryResult.items) {
+        const prodId = itemGroup._id || "";
+        const catName = productCategoryMap[prodId] || "Open Item";
+        const val = itemGroup.total || 0;
+        categorySalesMap[catName] = (categorySalesMap[catName] || 0) + val;
+      }
+    }
+
+    const categorySales = Object.entries(categorySalesMap).map(([name, total]) => ({
+      name,
+      total: round2(total)
+    }));
+
+    // Calculate payment totals
+    let cashTotal = 0;
+    let cardTotal = 0;
+    if (summaryResult?.payments) {
+      for (const p of summaryResult.payments) {
+        if (p._id === "cash") {
+          cashTotal += p.amount;
+        } else {
+          cardTotal += p.amount;
+        }
+      }
+    }
+
+    // 3. Fetch all expenses
+    let totalCashExpense = 0;
+    const rawExpenses = [];
+    try {
+      const expensesList = await Expense.find()
+        .select("paymentMode amount expenseType employeeName pst gst hst")
+        .lean();
+
+      for (const e of expensesList) {
+        rawExpenses.push({
+          employee: e.expenseType === "store" ? "Store Expense" : e.employeeName || "Manager",
+          pst: round2(e.pst || 0),
+          gst: round2(e.gst || 0),
+          hst: round2(e.hst || 0),
+          total: round2(e.amount || 0),
+          paymentMode: e.paymentMode || "cash"
+        });
+        if (e.paymentMode !== "card") {
+          totalCashExpense += e.amount || 0;
+        }
+      }
+    } catch (err) {
+      logger.warn(`Could not query expenses for reports: ${err.message}`);
+    }
+
+    const adjustedPosTotal = Math.max(0, totals.posTotal - totalCashExpense);
+
+    return {
+      completedOrders: {
+        count: totals.completedCount,
+        totalAmount: round2(totals.completedTotal)
+      },
+      cancelledOrders: {
+        count: totals.cancelledCount,
+        totalAmount: round2(totals.cancelledTotal)
+      },
+      refundOrders: { count: 0, totalAmount: 0 },
+      financials: {
+        allCategoryTotal: round2(totals.grossSubtotal),
+        subTotal: round2(totals.grossSubtotal),
+        deliveryCharges: 0,
+        debitCardCharges: 0,
+        discount: round2(totals.grossDiscount),
+        tax: round2(totals.grossTax),
+        grandTotal: round2(totals.completedTotal),
+        tips: 0,
+        finalAmount: round2(totals.completedTotal)
+      },
+      categorySales,
+      discountSummary: {
+        percentageDiscount: round2(totals.grossDiscount),
+        total: round2(totals.grossDiscount)
+      },
+      taxSummary: {
+        pst: 0,
+        gst: round2(totals.grossTax),
+        hst: 0,
+        total: round2(totals.grossTax)
+      },
+      salesReceived: {
+        accountPay: 0,
+        cash: round2(cashTotal),
+        creditCardSales: 0,
+        debitCardSales: round2(cardTotal),
+        grandTotal: round2(totals.completedTotal),
+        tips: 0,
+        finalAmount: round2(totals.completedTotal)
+      },
+      cardTypeReceived: {
+        interac: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
+        mastercard: { total: 0, tips: 0, final: 0 },
+        visa: { total: 0, tips: 0, final: 0 },
+        total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) }
+      },
+      orderTypeSummary: {
+        takeout: round2(totals.takeoutTotal),
+        dineIn: round2(totals.dineInTotal),
+        driveThrough: round2(totals.driveThroughTotal),
+        total: round2(totals.completedTotal)
+      },
+      channelSummary: {
+        online: round2(totals.onlineTotal),
+        pos: round2(adjustedPosTotal)
+      },
+      expense: rawExpenses
+    };
+  } catch (error) {
+    logger.error(`Order Service Error: getReportsSummary - ${error.message}`);
+    throw error;
+  }
+};
+

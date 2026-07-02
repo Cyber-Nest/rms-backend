@@ -39,6 +39,17 @@ exports.getSalesSummary = async (req, res) => {
   }
 };
 
+// GET /api/orders/reports-summary
+exports.getReportsSummary = async (req, res) => {
+  try {
+    const summary = await orderService.getReportsSummary();
+    res.status(200).json({ success: true, data: summary });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+
 // GET /api/orders/dashboard-metrics
 exports.getDashboardMetrics = async (req, res) => {
   try {

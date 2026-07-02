@@ -5,6 +5,7 @@ const orderController = require('../controllers/order.controller');
 router.post('/',              orderController.createOrder);
 router.get('/next-number',    orderController.getNextOrderNumber);
 router.get('/sales-summary',   orderController.getSalesSummary);
+router.get('/reports-summary', orderController.getReportsSummary);
 router.get('/dashboard-metrics', orderController.getDashboardMetrics);
 router.get('/customers', orderController.getUniqueCustomers);
 router.post('/sales-summary/deposit', orderController.saveDeposit);
