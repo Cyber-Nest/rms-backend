@@ -49,6 +49,39 @@ exports.getReportsSummary = async (req, res) => {
   }
 };
 
+// GET /api/orders/item-sales-summary
+exports.getItemSalesSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const summary = await orderService.getItemSalesSummary({ startDate, endDate });
+    res.status(200).json({ success: true, data: summary });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+// GET /api/orders/hourly-sales-summary
+exports.getHourlySalesSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const summary = await orderService.getHourlySalesSummary({ startDate, endDate });
+    res.status(200).json({ success: true, data: summary });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+// GET /api/orders/monthly-sales-summary
+exports.getMonthlySalesSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const summary = await orderService.getMonthlySalesSummary({ startDate, endDate });
+    res.status(200).json({ success: true, data: summary });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
 
 // GET /api/orders/dashboard-metrics
 exports.getDashboardMetrics = async (req, res) => {
