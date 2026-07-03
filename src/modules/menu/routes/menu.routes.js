@@ -25,6 +25,8 @@ router.put('/modifiers/:id', menuController.updateModifierGroup);
 router.delete('/modifiers/:id', menuController.deleteModifierGroup);
 
 // Product Routes
+router.get('/products/branch-list', menuController.getBranchProductsList);
+router.patch('/products/:id/toggle-active', menuController.toggleProductActive);
 router.get('/products', menuController.getProducts);
 router.post('/products', menuController.createProduct);
 router.put('/products/:id', menuController.updateProduct);

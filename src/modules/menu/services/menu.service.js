@@ -133,6 +133,39 @@ exports.getAllProducts = async () => {
   }
 };
 
+exports.getBranchProductsList = async () => {
+  try {
+    return await Product.find()
+      .select('_id name price image itemType categoryId productId isActive')
+      .populate('categoryId', 'name')
+      .sort({ name: 1 });
+  } catch (error) {
+    logger.error(`Menu Service Error: getBranchProductsList - ${error.message}`);
+    throw error;
+  }
+};
+
+exports.toggleProductActive = async (id, isActive) => {
+  try {
+    const product = await Product.findByIdAndUpdate(
+      id,
+      { isActive },
+      { returnDocument: 'after', runValidators: true }
+    )
+      .select('_id name price image itemType categoryId productId isActive')
+      .populate('categoryId', 'name');
+    
+    if (!product) {
+      throw new Error('Product not found.');
+    }
+    clearPOSMenuCache();
+    return product;
+  } catch (error) {
+    logger.error(`Menu Service Error: toggleProductActive - ${error.message}`);
+    throw error;
+  }
+};
+
 exports.createProduct = async (productData) => {
   try {
     const product = await Product.create(productData);
@@ -213,6 +246,7 @@ exports.getPOSMenuFeed = async () => {
       })),
       menuItems: products.map(prod => ({
         id: prod._id.toHexString(),
+        productId: prod.productId || "",
         categoryId: prod.categoryId.toString(),
         name: prod.name,
         description: prod.description,
