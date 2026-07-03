@@ -1099,11 +1099,12 @@ exports.getReportsSummary = async () => {
 // ── Get Item Sales Summary Report  ───────
 exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
   try {
-    // 1. Fetch products category 
+    // 1. Fetch products category and product IDs
     const productCategoryMap = {};
+    const productIDMap = {};
     try {
       const products = await Product.find()
-        .select("_id categoryId")
+        .select("_id categoryId productId")
         .populate({ path: "categoryId", select: "name" })
         .lean();
       
@@ -1115,6 +1116,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
             : "Other";
         if (prodId) {
           productCategoryMap[prodId] = catName;
+          productIDMap[prodId] = p.productId || "";
         }
       }
     } catch (err) {
@@ -1177,6 +1179,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
       categoriesMap[categoryName].items.push({
         name,
         menuItemId,
+        productId: productIDMap[menuItemId] || "",
         quantitySold,
         totalSales,
         percentageSales: 0

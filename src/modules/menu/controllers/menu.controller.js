@@ -96,6 +96,29 @@ exports.getProducts = async (req, res) => {
   }
 };
 
+exports.getBranchProductsList = async (req, res) => {
+  try {
+    const products = await menuService.getBranchProductsList();
+    res.status(200).json({ success: true, data: products });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+exports.toggleProductActive = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+    if (isActive === undefined) {
+      return res.status(400).json({ success: false, message: 'isActive status is required.' });
+    }
+    const product = await menuService.toggleProductActive(id, isActive);
+    res.status(200).json({ success: true, data: product });
+  } catch (error) {
+    handleError(res, error, 400);
+  }
+};
+
 exports.createProduct = async (req, res) => {
   try {
     const product = await menuService.createProduct(req.body);

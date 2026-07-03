@@ -46,9 +46,32 @@ const productSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true,
+  },
+  productId: {
+    type: String,
+    unique: true,
+    sparse: true,
   }
 }, {
   timestamps: true
+});
+
+// Pre-save hook to auto-generate sequential productId (M2000, M2001, etc.)
+productSchema.pre('save', async function() {
+  if (this.isNew && !this.productId) {
+    const Product = this.constructor;
+    const products = await Product.find({ productId: { $regex: /^M\d+$/ } }, 'productId');
+    let nextNumber = 2000;
+    if (products.length > 0) {
+      const numbers = products.map(p => {
+        const match = p.productId.match(/^M(\d+)$/);
+        return match ? parseInt(match[1], 10) : 2000;
+      });
+      const maxNumber = Math.max(...numbers);
+      nextNumber = maxNumber + 1;
+    }
+    this.productId = `M${nextNumber}`;
+  }
 });
 
 // Virtual to map _id to id for frontend compatibility
