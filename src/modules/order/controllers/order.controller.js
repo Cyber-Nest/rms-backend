@@ -1,6 +1,17 @@
 const orderService = require('../services/order.service');
 const receiptPdfService = require('../services/receiptPdf.service');
+const reportPdfService = require('../services/reportPdf.service');
+const reportExcelService = require('../services/reportExcel.service');
 const logger = require('../../../shared/utils/logger');
+
+const formatDateOnly = (dateStr) => {
+  if (!dateStr) return "";
+  const parts = dateStr.split("-");
+  if (parts.length === 3) {
+    return `${parts[1]}/${parts[2]}/${parts[0]}`;
+  }
+  return dateStr;
+};
 
 const handleError = (res, error, status = 400) => {
   logger.error(`Order Controller Error: ${error.message}`);
@@ -207,5 +218,102 @@ exports.saveDeposit = async (req, res) => {
     res.status(200).json({ success: true, data: deposit });
   } catch (error) {
     handleError(res, error, 400);
+  }
+};
+
+// GET /api/orders/export-report
+exports.exportReport = async (req, res) => {
+  try {
+    const { type, format, startDate, endDate, search, status } = req.query;
+    if (!type || !format) {
+      return res.status(400).json({ success: false, message: "Type and format query parameters are required." });
+    }
+
+    let reportData = [];
+    const dateRangeStr = startDate === endDate 
+      ? formatDateOnly(startDate) 
+      : `${formatDateOnly(startDate)} - ${formatDateOnly(endDate)}`;
+
+    if (type === "item_sales") {
+      reportData = await orderService.getItemSalesSummary({ startDate, endDate });
+    } else if (type === "hourly_sales") {
+      reportData = await orderService.getHourlySalesSummary({ startDate, endDate });
+    } else if (type === "monthly_sales_summary") {
+      reportData = await orderService.getMonthlySalesSummary({ startDate, endDate });
+    } else if (type === "cash_out_summary") {
+      const allOrders = await orderService.getAllOrders({ startDate, endDate, status: "completed" });
+      const groups = {};
+      allOrders.forEach((order) => {
+        const empName = order.customer?.name === 'No Name' || !order.customer?.name ? 'Manager' : order.customer.name;
+        if (!groups[empName]) {
+          groups[empName] = {
+            employeeName: empName,
+            orderCount: 0,
+            lastCashOut: order.createdAt,
+            totalAmount: 0
+          };
+        }
+        groups[empName].orderCount += 1;
+        groups[empName].totalAmount += order.total;
+        if (new Date(order.createdAt) > new Date(groups[empName].lastCashOut)) {
+          groups[empName].lastCashOut = order.createdAt;
+        }
+      });
+      reportData = Object.values(groups);
+    } else if (type === "failed_transaction" || type === "refund_orders") {
+      const allOrders = await orderService.getAllOrders({ startDate, endDate });
+      reportData = allOrders.filter((order) => {
+        if (type === "failed_transaction") {
+          const isFailed = order.status === 'cancelled' || order.paymentStatus === 'unpaid';
+          if (!isFailed) return false;
+        } else {
+          const isRefunded = order.status === 'cancelled';
+          if (!isRefunded) return false;
+        }
+
+        if (search && search.trim() !== '') {
+          const kw = search.toLowerCase().trim();
+          const numMatch = order.orderNumber.toLowerCase().includes(kw);
+          const nameMatch = order.customer?.name?.toLowerCase().includes(kw) || false;
+          const phoneMatch = order.customer?.phone?.includes(kw) || false;
+          if (!numMatch && !nameMatch && !phoneMatch) return false;
+        }
+
+        if (status && status !== '') {
+          if (order.status !== status) return false;
+        }
+
+        return true;
+      });
+    }
+
+    if (format === "pdf") {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename=${type}-report-${startDate}-to-${endDate}.pdf`);
+      reportPdfService.generateReportPdf(type, reportData, dateRangeStr, res);
+    } else {
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename=${type}-report-${startDate}-to-${endDate}.csv`);
+      reportExcelService.generateReportCsv(type, reportData, dateRangeStr, res);
+    }
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+// GET /api/orders/sales-summary/pdf
+exports.downloadSalesSummaryPdf = async (req, res) => {
+  try {
+    const { date, startDate, endDate } = req.query;
+    const summary = await orderService.getSalesSummary({ date, startDate, endDate });
+
+    const fileDateStr = date || startDate || new Date().toISOString().split("T")[0];
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=sales-summary-${fileDateStr}.pdf`);
+
+    receiptPdfService.generateSalesSummaryReceiptPdf(summary, fileDateStr, res);
+  } catch (error) {
+    handleError(res, error, 500);
   }
 };
