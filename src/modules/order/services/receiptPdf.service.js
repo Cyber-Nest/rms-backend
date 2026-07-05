@@ -439,3 +439,236 @@ exports.generateReceiptPdf = (order, res) => {
     }
   }
 };
+
+exports.generateSalesSummaryReceiptPdf = (summary, dateStr, res) => {
+  try {
+    // 80mm width. Since a daily summary has category lists, payment summaries, order types and expenses,
+    // we set height to 1200. This is standard for receipt print outputs.
+    const doc = new PDFDocument({
+      size: [226, 1200],
+      margin: 10,
+    });
+
+    doc.pipe(res);
+
+    const printableWidth = 206; // 226 - 2*10 margin
+    const startX = 10;
+
+    // Helper functions for formatting
+    const formatDate = (dateVal) => {
+      if (!dateVal) return "";
+      try {
+        const d = new Date(dateVal);
+        const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return `${days[d.getDay()]}, ${months[d.getMonth()]} ${String(d.getDate()).padStart(2, "0")}, ${d.getFullYear()}`;
+      } catch {
+        return dateVal;
+      }
+    };
+
+    // 1. Header & Store Info Box (strictly Black & White)
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(14)
+      .fillColor("#000000")
+      .text("Chicken Delight", startX, doc.y, {
+        align: "center",
+        width: printableWidth,
+      });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .fillColor("#000000")
+      .text("DELIGHT", startX, doc.y, {
+        align: "center",
+        width: printableWidth,
+      });
+    doc.moveDown(0.5);
+
+    // Dashed Store Info Box
+    const boxStartY = doc.y;
+    doc.font("Helvetica").fontSize(7.5).fillColor("#000000");
+    doc.text("231 Edgefield Pl , Strathmore,", startX + 5, boxStartY + 4, {
+      align: "center",
+      width: printableWidth - 10,
+    });
+    doc.text("Alberta, T1P 0E8, Canada", {
+      align: "center",
+      width: printableWidth - 10,
+    });
+    doc.text("Tel # : (587) 365-5401", {
+      align: "center",
+      width: printableWidth - 10,
+    });
+    doc.text("GST# : 123456789", {
+      align: "center",
+      width: printableWidth - 10,
+    });
+    const boxEndY = doc.y + 4;
+
+    doc
+      .rect(startX + 2, boxStartY, printableWidth - 4, boxEndY - boxStartY)
+      .dash(2, { space: 2 })
+      .stroke("#000000")
+      .undash();
+    doc.y = boxEndY + 8;
+
+    // 2. Report Header
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(12)
+      .text("DAILY SALES SUMMARY", startX, doc.y, {
+        align: "center",
+        width: printableWidth,
+      });
+    doc.moveDown(0.2);
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .text(`Date Filter: ${formatDate(dateStr)}`, startX, doc.y, {
+        align: "center",
+        width: printableWidth,
+      });
+    doc.moveDown(0.5);
+
+    // Helper to draw dashed divider
+    const drawDivider = () => {
+      doc
+        .moveTo(startX, doc.y)
+        .lineTo(startX + printableWidth, doc.y)
+        .dash(2, { space: 2 })
+        .stroke("#000000")
+        .undash();
+      doc.moveDown(0.3);
+    };
+
+    // Helper for currency
+    const fmt = (num) => `$${(num || 0).toFixed(2)}`;
+
+    // Helper for key-value row (B&W)
+    const drawRow = (left, right, isBold = false, indent = 0) => {
+      const rowY = doc.y;
+      doc.font(isBold ? "Helvetica-Bold" : "Helvetica").fontSize(8);
+      doc.text(left, startX + indent, rowY, { width: printableWidth - 60 - indent });
+      doc.text(right, startX + printableWidth - 60, rowY, { width: 60, align: "right" });
+      doc.moveDown(0.2);
+    };
+
+    // Section 1: Sales By Category
+    drawDivider();
+    doc.font("Helvetica-Bold").fontSize(8.5).text("SALES BY CATEGORY", startX, doc.y);
+    doc.moveDown(0.2);
+    drawDivider();
+
+    if (summary.categorySales && Array.isArray(summary.categorySales)) {
+      summary.categorySales.forEach((cat) => {
+        drawRow(cat.name || "Uncategorized", fmt(cat.total));
+      });
+      doc.moveDown(0.2);
+      drawRow("ALL CATEGORY TOTAL", fmt(summary.financials?.allCategoryTotal || 0), true);
+    }
+    doc.moveDown(0.4);
+
+    // Section 2: Sales Summary Accounting
+    drawDivider();
+    doc.font("Helvetica-Bold").fontSize(8.5).text("SALES ACCOUNTING", startX, doc.y);
+    doc.moveDown(0.2);
+    drawDivider();
+
+    const accounting = summary.financials || {};
+    drawRow("Sub Total :", fmt(accounting.subTotal));
+    drawRow("Delivery Charges :", fmt(accounting.deliveryCharges));
+    drawRow("Debit Card Charges :", fmt(accounting.debitCardCharges));
+    drawRow("Discount :", `(${fmt(accounting.discount)})`);
+    drawRow("Tax (GST) :", fmt(accounting.tax));
+    doc.moveDown(0.2);
+    drawRow("GRAND TOTAL :", fmt(accounting.grandTotal), true);
+    drawRow("Tips :", fmt(accounting.tips));
+    doc.moveDown(0.2);
+    drawRow("FINAL AMOUNT :", fmt(accounting.finalAmount), true);
+    doc.moveDown(0.4);
+
+    // Section 3: Sales Received (Payment Type)
+    drawDivider();
+    doc.font("Helvetica-Bold").fontSize(8.5).text("SALES RECEIVED", startX, doc.y);
+    doc.moveDown(0.2);
+    drawDivider();
+
+    const payments = summary.salesReceived || {};
+    drawRow("Cash :", fmt(payments.cash));
+    drawRow("Account Pay :", fmt(payments.accountPay));
+    drawRow("Credit Card - Sales :", fmt(payments.creditCardSales));
+    drawRow("Debit Card - Sales :", fmt(payments.debitCardSales));
+    doc.moveDown(0.2);
+    drawRow("GRAND TOTAL :", fmt(payments.grandTotal), true);
+    drawRow("Credit Card - Tips :", fmt(payments.tips));
+    drawRow("Debit Card - Tips :", fmt(payments.tips));
+    doc.moveDown(0.2);
+    drawRow("FINAL AMOUNT :", fmt(payments.finalAmount), true);
+    doc.moveDown(0.4);
+
+    // Section 4: Order Type
+    drawDivider();
+    doc.font("Helvetica-Bold").fontSize(8.5).text("ORDER TYPE", startX, doc.y);
+    doc.moveDown(0.2);
+    drawDivider();
+
+    const orderType = summary.orderTypeSummary || {};
+    drawRow("Take-Out :", fmt(orderType.takeout));
+    drawRow("Dine-In :", fmt(orderType.dineIn));
+    drawRow("Drive Through :", fmt(orderType.driveThrough));
+    doc.moveDown(0.2);
+    drawRow("TOTAL :", fmt(orderType.total), true);
+    doc.moveDown(0.4);
+
+    // Section 5: Expenses
+    if (summary.expense && Array.isArray(summary.expense) && summary.expense.length > 0) {
+      drawDivider();
+      doc.font("Helvetica-Bold").fontSize(8.5).text("EXPENSES", startX, doc.y);
+      doc.moveDown(0.2);
+      drawDivider();
+
+      summary.expense.forEach((exp) => {
+        const emp = exp.employee || "Manager";
+        const mode = exp.paymentMode || "cash";
+        drawRow(`${emp} (${mode})`, fmt(exp.total));
+        if (exp.pst || exp.gst || exp.hst) {
+          doc.font("Helvetica").fontSize(7).fillColor("#444444");
+          doc.text(`   PST: ${fmt(exp.pst)} | GST: ${fmt(exp.gst)} | HST: ${fmt(exp.hst)}`, startX, doc.y);
+          doc.fillColor("#000000");
+          doc.moveDown(0.15);
+        }
+      });
+      doc.moveDown(0.2);
+      const expenseTotal = summary.expense.reduce((sum, e) => sum + (e.total || 0), 0);
+      drawRow("TOTAL EXPENSES :", fmt(expenseTotal), true);
+      doc.moveDown(0.4);
+    }
+
+    // 6. Footer Slogans
+    drawDivider();
+    doc
+      .font("Helvetica-BoldOblique")
+      .fontSize(8)
+      .text('"Don\'t Cook Tonight, Call Chicken Delight!"', startX, doc.y, {
+        align: "center",
+        width: printableWidth,
+      });
+    doc.moveDown(0.3);
+    doc
+      .font("Helvetica")
+      .fontSize(7.5)
+      .text("Have a nice day, Visit us again!", startX, doc.y, {
+        align: "center",
+        width: printableWidth,
+      });
+
+    doc.end();
+  } catch (error) {
+    logger.error(`Error generating sales summary PDF receipt: ${error.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: "Failed to generate sales summary PDF" });
+    }
+  }
+};
