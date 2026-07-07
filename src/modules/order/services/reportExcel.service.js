@@ -26,20 +26,20 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
 
     const reportTitle = titleMap[type] || "Sales Report";
 
-    // Start with UTF-8 BOM to make Excel open it with correct encoding
+    
     let csvContent = "\uFEFF";
 
-    // 1. Report Title and Period headers
+    
     csvContent += formatRow(["Chicken Delight"]);
     csvContent += formatRow([reportTitle]);
     csvContent += formatRow([`Period: ${dateRangeStr}`]);
-    csvContent += formatRow([]); // Blank row
+    csvContent += formatRow([]); 
 
     if (type === "item_sales") {
       csvContent += formatRow(["Item Name", "Product ID", "# Sold", "Sales", "% Sales"]);
       
       data.forEach((group) => {
-        // Category Header Row
+        
         csvContent += formatRow([group.categoryName.toUpperCase()]);
         
         group.items.forEach((item) => {
@@ -52,7 +52,7 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
           ]);
         });
 
-        // Category Subtotal Row
+        
         csvContent += formatRow([
           `Subtotal (${group.categoryName})`,
           "",
@@ -60,7 +60,7 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
           group.subtotalSales.toFixed(2),
           "",
         ]);
-        csvContent += formatRow([]); // blank spacer row
+        csvContent += formatRow([]); 
       });
 
     } else if (type === "hourly_sales") {
@@ -109,7 +109,7 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
       csvContent += formatRow(["TOTAL", grandOrders, "", grandTotal.toFixed(2)]);
 
     } else if (type === "monthly_sales_summary") {
-      // Export all key accounting columns for Monthly Summary
+      
       csvContent += formatRow([
         "Date",
         "Sub Total",

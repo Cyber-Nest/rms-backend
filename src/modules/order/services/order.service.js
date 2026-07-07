@@ -435,20 +435,20 @@ exports.getSalesSummary = async (filters = {}) => {
     let grossDiscount = 0;
     let grandTotal = 0;
 
-    // Categories map
+    
     const categorySales = {};
 
-    // Order Types
+    
     let takeoutTotal = 0;
     let dineInTotal = 0;
     let driveThroughTotal = 0;
     let deliveryTotal = 0;
 
-    // Channels
+    
     let onlineTotal = 0;
     let posTotal = 0;
 
-    // Payment methods
+    
     let cashTotal = 0;
     let cardTotal = 0;
     let accountPayTotal = 0;
@@ -458,7 +458,7 @@ exports.getSalesSummary = async (filters = {}) => {
     let creditCardTotal = 0;
     let debitCardTotal = 0;
 
-    // Standard optimized loop (avoiding callback contexts)
+    
     for (const order of orders) {
       if (order.status === "cancelled") {
         cancelledCount += 1;
@@ -472,7 +472,7 @@ exports.getSalesSummary = async (filters = {}) => {
         grossDiscount += order.discount || 0;
         grandTotal += order.total || 0;
 
-        // Order types
+        
         if (order.orderType === "takeout") takeoutTotal += order.total;
         else if (order.orderType === "dine-in") dineInTotal += order.total;
         else if (order.orderType === "drive-through")
@@ -480,11 +480,11 @@ exports.getSalesSummary = async (filters = {}) => {
         else if (order.orderType === "delivery")
           deliveryTotal += order.total;
 
-        // Channel
+        
         if (order.orderSource === "online") onlineTotal += order.total;
         else posTotal += order.total;
 
-        // Payments
+        
         if (order.paymentStatus === "paid") {
           if (order.payments && order.payments.length > 0) {
             for (const p of order.payments) {
@@ -494,7 +494,7 @@ exports.getSalesSummary = async (filters = {}) => {
                 accountPayTotal += p.amount;
               } else {
                 cardTotal += p.amount;
-                // Parse specific brand
+                
                 const brand = p.cardBrand?.toLowerCase() || "";
                 if (brand === "visa") visaTotal += p.amount;
                 else if (brand === "mastercard") mastercardTotal += p.amount;
@@ -506,7 +506,7 @@ exports.getSalesSummary = async (filters = {}) => {
               }
             }
           } else {
-            // fallback if payments array is missing/empty (e.g. old orders)
+            
             if (order.orderSource === "online" || order.paymentMethod === "stripe") {
               accountPayTotal += order.total;
             } else {
@@ -515,7 +515,7 @@ exports.getSalesSummary = async (filters = {}) => {
           }
         }
 
-        // Category breakdown from items
+        
         if (order.items && Array.isArray(order.items)) {
           for (const item of order.items) {
             const itemProdId = item.menuItemId || "";
@@ -532,7 +532,7 @@ exports.getSalesSummary = async (filters = {}) => {
       }
     }
 
-    // Query daily deposit record
+    
     let targetDateStr = "";
     if (filters.date) {
       targetDateStr = String(filters.date).split("T")[0];
@@ -544,7 +544,7 @@ exports.getSalesSummary = async (filters = {}) => {
 
     const deposit = await Deposit.findOne({ date: targetDateStr }).lean();
 
-    // Query expenses for the same day to calculate totalCashExpense
+    
     let totalCashExpense = 0;
     const rawExpenses = [];
     try {
@@ -591,7 +591,7 @@ exports.getSalesSummary = async (filters = {}) => {
       logger.warn(`Could not query daily expenses: ${err.message}`);
     }
 
-    // Deduct cash expenses from expected totals
+    
     const adjustedExpectedCash = Math.max(0, cashTotal - totalCashExpense);
     const adjustedPosTotal = Math.max(0, posTotal - totalCashExpense);
 
@@ -686,7 +686,7 @@ exports.getSalesSummary = async (filters = {}) => {
   }
 };
 
-// ── Save Deposit ───────────────────────────────────────────────
+
 exports.saveDeposit = async (depositData) => {
   try {
     const { date, cashAmount, cardAmount, accountPayAmount } = depositData;
@@ -708,12 +708,12 @@ exports.saveDeposit = async (depositData) => {
   }
 };
 
-// ── Get Dashboard Metrics Aggregation ──────────────────────────
+
 exports.getDashboardMetrics = async (filters = {}) => {
   try {
     const targetDateStr = filters.date || new Date().toISOString().split("T")[0];
     
-    // Parse target date and set day boundaries
+    
     const targetDate = new Date(targetDateStr);
     
     const todayStart = new Date(targetDate);
@@ -721,12 +721,12 @@ exports.getDashboardMetrics = async (filters = {}) => {
     const todayEnd = new Date(targetDate);
     todayEnd.setHours(23, 59, 59, 999);
 
-    // 30 Days ago boundaries
+    
     const past30DaysStart = new Date(targetDate);
     past30DaysStart.setDate(past30DaysStart.getDate() - 30);
     past30DaysStart.setHours(0, 0, 0, 0);
 
-    // Fetch all orders in the 30-day window in one query with projection
+    
     const dateQuery = buildDateFilter(past30DaysStart, todayEnd);
     const orders30Days = await Order.find(dateQuery)
     .select("createdAt status total customer.phone customer.email items.name items.quantity orderTiming scheduledAt dueAt")
@@ -742,7 +742,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
     for (const order of orders30Days) {
       const orderDate = getOrderBusinessDate(order);
       
-      // Store earliest order date for phone and email
+      
       const phone = order.customer?.phone?.trim();
       const email = order.customer?.email?.trim();
       if (phone && !phoneToEarliestDate.has(phone)) {
@@ -769,7 +769,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
       }
     }
 
-    // Calculate New vs Returning Customers in memory (no N+1 queries)
+    
     let newCustomers = 0;
     let returningCustomers = 0;
 
@@ -802,7 +802,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
       }
     }
 
-    // Popular Days Distribution
+    
     const daysDataCounts = {
       Monday: 0,
       Tuesday: 0,
@@ -825,7 +825,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
       .map(([name, value]) => ({ name, value }))
       .filter(item => item.value > 0);
 
-    // Popular Food Distribution
+    
     const foodDataCounts = {};
     for (const order of nonCancelled30Days) {
       if (order.items && Array.isArray(order.items)) {
@@ -870,7 +870,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
 };
 
 
-// ── Get Unique Customers List ──────────────────────────────────
+
 exports.getUniqueCustomers = async (filters = {}) => {
   try {
     const pipeline = [];
@@ -883,7 +883,7 @@ exports.getUniqueCustomers = async (filters = {}) => {
       ]
     };
 
-    // Filter by date in the database layer (leveraging indexes) rather than in application memory
+    
     if (filters.date) {
       const start = new Date(filters.date);
       start.setHours(0, 0, 0, 0);
@@ -897,7 +897,7 @@ exports.getUniqueCustomers = async (filters = {}) => {
 
     pipeline.push({ $sort: { createdAt: -1 } });
 
-    // Group by phone or email
+    
     pipeline.push({
       $group: {
         _id: {
@@ -920,7 +920,7 @@ exports.getUniqueCustomers = async (filters = {}) => {
       }
     });
 
-    // Sort customers by lastOrderDate descending
+    
     pipeline.push({ $sort: { lastOrderDate: -1 } });
 
     let results = await Order.aggregate(pipeline);
@@ -948,10 +948,10 @@ exports.getUniqueCustomers = async (filters = {}) => {
   }
 };
 
-// ── Get All Time Reports Summary  ───────
+
 exports.getReportsSummary = async () => {
   try {
-    // 1. Fetch products category lookup map
+    
     const productCategoryMap = {};
     try {
       const products = await Product.find()
@@ -973,7 +973,7 @@ exports.getReportsSummary = async () => {
       logger.warn(`Could not build product category lookup for reports: ${err.message}`);
     }
 
-    // 2. Perform aggregation on Order
+    
     const [summaryResult] = await Order.aggregate([
       {
         $facet: {
@@ -1123,7 +1123,7 @@ exports.getReportsSummary = async () => {
       posTotal: 0
     };
 
-    // Calculate category sales using productCategoryMap
+    
     const categorySalesMap = {};
     if (summaryResult?.items) {
       for (const itemGroup of summaryResult.items) {
@@ -1139,7 +1139,7 @@ exports.getReportsSummary = async () => {
       total: round2(total)
     }));
 
-    // Calculate payment totals
+    
     let cashTotal = 0;
     let cardTotal = 0;
     let accountPayTotal = 0;
@@ -1172,7 +1172,7 @@ exports.getReportsSummary = async () => {
       }
     }
 
-    // 3. Fetch all expenses
+    
     let totalCashExpense = 0;
     const rawExpenses = [];
     try {
@@ -1265,10 +1265,10 @@ exports.getReportsSummary = async () => {
   }
 };
 
-// ── Get Item Sales Summary Report  ───────
+
 exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
   try {
-    // 1. Fetch products category and product IDs
+    
     const productCategoryMap = {};
     const productIDMap = {};
     try {
@@ -1292,14 +1292,14 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
       logger.warn(`Could not build product category lookup for item sales: ${err.message}`);
     }
 
-    // Date range filter
+    
     const matchQuery = { status: { $ne: "cancelled" } };
     let start, end;
     if (startDate && endDate) {
       start = new Date(startDate + "T00:00:00.000Z");
       end = new Date(endDate + "T23:59:59.999Z");
     } else {
-      // Default: Today's date in local time
+      
       const d = new Date();
       const timezoneOffsetMinutes = d.getTimezoneOffset();
       const localTime = new Date(d.getTime() - timezoneOffsetMinutes * 60 * 1000);
@@ -1310,7 +1310,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
     const dateFilter = buildDateFilter(start, end);
     Object.assign(matchQuery, dateFilter);
 
-    // 2. Perform aggregation on Order
+    
     const aggregatedItems = await Order.aggregate([
       { $match: matchQuery },
       { $unwind: "$items" },
@@ -1326,7 +1326,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
       }
     ]);
 
-    // 3. Map to categories
+    
     const categoriesMap = {};
 
     for (const item of aggregatedItems) {
@@ -1359,7 +1359,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
       categoriesMap[categoryName].subtotalSales += totalSales;
     }
 
-    // 4. Calculate percentages
+    
     const result = [];
     for (const catName of Object.keys(categoriesMap)) {
       const catData = categoriesMap[catName];
@@ -1373,7 +1373,6 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
         }
       }
 
-      // Sort items inside category by sales descending
       catData.items.sort((a, b) => b.totalSales - a.totalSales);
 
       result.push(catData);
@@ -1389,7 +1388,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
   }
 };
 
-// ── Get Hourly Sales Summary Report  ───────
+// Get Hourly Sales Summary Report  ───────
 exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
   try {
     const matchQuery = { status: { $ne: "cancelled" } };
@@ -1475,12 +1474,12 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
     Object.assign(cancelledQuery, buildDateFilter(start, end));
     const cancelledOrders = await Order.find(cancelledQuery).lean();
 
-    // Fetch expenses
+    
     const expenses = await Expense.find({
       expenseDate: { $gte: start, $lte: end }
     }).lean();
 
-    // Fetch deposits
+    
     const deposits = await Deposit.find({
       date: {
         $gte: start.toISOString().split("T")[0],
@@ -1488,33 +1487,33 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       }
     }).lean();
 
-    // Grouping by Date string (YYYY-MM-DD)
+    
     const result = [];
     const currentDate = new Date(start);
     const stopDate = new Date(end);
 
     while (currentDate <= stopDate) {
-      const dateStr = currentDate.toISOString().split("T")[0]; // YYYY-MM-DD
+      const dateStr = currentDate.toISOString().split("T")[0]; 
       const dateParts = dateStr.split("-");
-      const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`; // MM/DD/YYYY
+      const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`; 
 
-      // Filter data for this specific day
+      
       const dayOrders = orders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
       const dayCancelled = cancelledOrders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
       const dayExpenses = expenses.filter(e => e.expenseDate && new Date(e.expenseDate).toISOString().split("T")[0] === dateStr);
       const dayDeposit = deposits.find(d => d.date === dateStr) || { cashAmount: 0, cardAmount: 0, accountPayAmount: 0 };
 
-      // ── 1. Sales Summary Calculations ──
+      
       const subtotal = dayOrders.reduce((sum, o) => sum + (o.subtotal || 0), 0);
       const discount = dayOrders.reduce((sum, o) => sum + (o.discount || 0), 0);
       const tax = dayOrders.reduce((sum, o) => sum + (o.tax || 0), 0);
       const grandTotal = dayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
-      // Generate realistic tips
+      
       const tips = grandTotal > 0 ? round2(grandTotal * 0.02) : 0;
       const finalAmount = round2(grandTotal + tips);
 
-      // ── 2. Payment Type Calculations ──
+      
       let cashSales = 0;
       let cardSales = 0;
       let accountPaySales = 0;
@@ -1538,19 +1537,19 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
         }
       }
 
-      // Split Card Sales into Debit and Credit
+      
       const debitCardSales = round2(cardSales * 0.4);
       const creditCardSales = round2(cardSales * 0.6);
       const finalCashSales = round2(cashSales);
       const finalAccountPaySales = round2(accountPaySales);
       const paymentGrandTotal = round2(finalCashSales + debitCardSales + creditCardSales + finalAccountPaySales);
 
-      // Tips splits
+      
       const debitTips = round2(tips * 0.4);
       const creditTips = round2(tips * 0.6);
       const paymentFinalAmount = round2(paymentGrandTotal + debitTips + creditTips);
 
-      // ── 3. Order Type Calculations ──
+      
       let takeout = 0;
       let dineIn = 0;
       let delivery = 0;
@@ -1567,26 +1566,26 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
 
       const orderTypeTotal = round2(takeout + dineIn + delivery + driveThrough);
 
-      // ── 4. Orders Counts ──
+      
       const completedCount = dayOrders.filter(o => o.status === "completed").length;
       const paidCancelledCount = dayCancelled.filter(o => o.paymentStatus === "paid").length;
       const unpaidCancelledCount = dayCancelled.filter(o => o.paymentStatus !== "paid").length;
       const refundCount = 0;
       const refundAmount = 0;
 
-      // ── 5. Tax Calculations ──
+      
       const gst = round2(tax);
       const pst = 0;
       const hst = 0;
       const taxTotal = gst;
 
-      // ── 6. Card Type Split ──
+      
       const amexFinalAmount = round2(creditCardSales * 0.1);
       const interacFinalAmount = round2(debitCardSales);
       const mastercardFinalAmount = round2(creditCardSales * 0.4);
       const visaFinalAmount = round2(creditCardSales * 0.5);
 
-      // ── 7. Online Platform Split ──
+      
       let websiteOnline = 0;
       let uberOnline = 0;
       let skipOnline = 0;
@@ -1599,14 +1598,14 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       }
       const onlineTotal = round2(websiteOnline + uberOnline + skipOnline + doordashOnline);
 
-      // ── 8. POS Calculations ──
+      
       const posSales = dayOrders.filter(o => o.orderSource === "pos").reduce((sum, o) => sum + (o.total || 0), 0);
       const posTotal = round2(posSales);
 
-      // ── 9. Expenses ──
+      
       const totalExpense = dayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
 
-      // ── 10. Shortage / Overage ──
+      
       const depositCash = dayDeposit.cashAmount || 0;
       const depositCard = dayDeposit.cardAmount || 0;
       const depositAccountPay = dayDeposit.accountPayAmount || 0;
@@ -1616,7 +1615,7 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       const shortageCard = 0;
       const shortageAccountPay = 0;
 
-      // Append row
+      
       result.push({
         date: reportDateFormatted,
         rawDate: dateStr,

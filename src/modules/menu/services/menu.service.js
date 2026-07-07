@@ -9,7 +9,7 @@ const clearPOSMenuCache = () => {
   cachedPOSMenuFeed = null;
 };
 
-// category services
+
 
 exports.getAllCategories = async () => {
   try {
@@ -64,7 +64,7 @@ exports.deleteCategory = async (id) => {
   }
 };
 
-// modifier services
+
 
 exports.getAllModifierGroups = async () => {
   try {
@@ -114,7 +114,7 @@ exports.deleteModifierGroup = async (id) => {
   }
 };
 
-// product services
+
 
 exports.getAllProducts = async () => {
   try {
@@ -219,7 +219,7 @@ exports.deleteProduct = async (id) => {
   }
 };
 
-// pos public feed service
+
 
 exports.getPOSMenuFeed = async () => {
   try {
@@ -296,7 +296,7 @@ exports.getPOSMenuFeed = async () => {
   }
 };
 
-// image upload & deletion services
+
 
 exports.uploadImageToCloudinary = (fileBuffer) => {
   return new Promise((resolve, reject) => {
@@ -321,7 +321,7 @@ exports.uploadImageToCloudinary = (fileBuffer) => {
   });
 };
 
-// HELPER TO EXTRACT PUBLIC_ID FROM CLOUDINARY URL
+
 const getPublicIdFromUrl = (url) => {
   try {
     const parts = url.split('/image/upload/');

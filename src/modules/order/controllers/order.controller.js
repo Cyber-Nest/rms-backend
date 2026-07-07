@@ -18,7 +18,7 @@ const handleError = (res, error, status = 400) => {
   return res.status(status).json({ success: false, message: error.message });
 };
 
-// POST /api/orders
+
 exports.createOrder = async (req, res) => {
   try {
     const order = await orderService.createOrder(req.body);
@@ -28,7 +28,7 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-// GET /api/orders
+
 exports.getAllOrders = async (req, res) => {
   try {
     const { status, orderType, paymentStatus, date, startDate, endDate } = req.query;
@@ -39,7 +39,7 @@ exports.getAllOrders = async (req, res) => {
   }
 };
 
-// GET /api/orders/sales-summary
+
 exports.getSalesSummary = async (req, res) => {
   try {
     const { date, startDate, endDate } = req.query;
@@ -50,7 +50,7 @@ exports.getSalesSummary = async (req, res) => {
   }
 };
 
-// GET /api/orders/reports-summary
+
 exports.getReportsSummary = async (req, res) => {
   try {
     const summary = await orderService.getReportsSummary();
@@ -60,7 +60,7 @@ exports.getReportsSummary = async (req, res) => {
   }
 };
 
-// GET /api/orders/item-sales-summary
+
 exports.getItemSalesSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -71,7 +71,7 @@ exports.getItemSalesSummary = async (req, res) => {
   }
 };
 
-// GET /api/orders/hourly-sales-summary
+
 exports.getHourlySalesSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -82,7 +82,7 @@ exports.getHourlySalesSummary = async (req, res) => {
   }
 };
 
-// GET /api/orders/monthly-sales-summary
+
 exports.getMonthlySalesSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -94,7 +94,7 @@ exports.getMonthlySalesSummary = async (req, res) => {
 };
 
 
-// GET /api/orders/dashboard-metrics
+
 exports.getDashboardMetrics = async (req, res) => {
   try {
     const { date } = req.query;
@@ -105,7 +105,7 @@ exports.getDashboardMetrics = async (req, res) => {
   }
 };
 
-// GET /api/orders/customers
+
 exports.getUniqueCustomers = async (req, res) => {
   try {
     const { date } = req.query;
@@ -116,7 +116,7 @@ exports.getUniqueCustomers = async (req, res) => {
   }
 };
 
-// GET /api/orders/:id
+
 exports.getOrderById = async (req, res) => {
   try {
     const order = await orderService.getOrderById(req.params.id);
@@ -126,7 +126,7 @@ exports.getOrderById = async (req, res) => {
   }
 };
 
-// GET /api/orders/:id/pdf
+
 exports.downloadReceiptPdf = async (req, res) => {
   try {
     const order = await orderService.getOrderById(req.params.id);
@@ -141,7 +141,7 @@ exports.downloadReceiptPdf = async (req, res) => {
   }
 };
 
-// PATCH /api/orders/:id/status
+
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { status, note } = req.body;
@@ -153,7 +153,7 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
-// PATCH /api/orders/:id/payment  — mark pay-later as paid
+
 exports.markOrderPaid = async (req, res) => {
   try {
     const { payments } = req.body;
@@ -164,7 +164,7 @@ exports.markOrderPaid = async (req, res) => {
   }
 };
 
-// DELETE /api/orders/:id  — cancel order
+
 exports.cancelOrder = async (req, res) => {
   try {
     const order = await orderService.cancelOrder(req.params.id);
@@ -174,7 +174,7 @@ exports.cancelOrder = async (req, res) => {
   }
 };
 
-// GET /api/orders/next-number
+
 exports.getNextOrderNumber = async (req, res) => {
   try {
     const { type } = req.query;
@@ -188,7 +188,7 @@ exports.getNextOrderNumber = async (req, res) => {
   }
 };
 
-// PATCH /api/orders/:id/due-time
+
 exports.updateOrderDueTime = async (req, res) => {
   try {
     const { dueAt } = req.body;
@@ -200,7 +200,7 @@ exports.updateOrderDueTime = async (req, res) => {
   }
 };
 
-// PATCH /api/orders/:id  — update order items
+
 exports.updateOrderItems = async (req, res) => {
   try {
     const order = await orderService.updateOrderItems(req.params.id, req.body);
@@ -210,7 +210,7 @@ exports.updateOrderItems = async (req, res) => {
   }
 };
 
-// POST /api/orders/sales-summary/deposit
+
 exports.saveDeposit = async (req, res) => {
   try {
     const { date, cashAmount, cardAmount, accountPayAmount } = req.body;
@@ -221,7 +221,7 @@ exports.saveDeposit = async (req, res) => {
   }
 };
 
-// GET /api/orders/export-report
+
 exports.exportReport = async (req, res) => {
   try {
     const { type, format, startDate, endDate, search, status } = req.query;
@@ -301,7 +301,7 @@ exports.exportReport = async (req, res) => {
   }
 };
 
-// GET /api/orders/sales-summary/pdf
+
 exports.downloadSalesSummaryPdf = async (req, res) => {
   try {
     const { date, startDate, endDate } = req.query;

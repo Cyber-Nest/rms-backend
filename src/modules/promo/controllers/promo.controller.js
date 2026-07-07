@@ -6,7 +6,7 @@ const handleError = (res, error, status = 400) => {
   return res.status(status).json({ success: false, message: error.message });
 };
 
-// POST /api/promos/validate
+
 exports.validatePromo = async (req, res) => {
   try {
     const { code, subtotal } = req.body;
@@ -20,7 +20,7 @@ exports.validatePromo = async (req, res) => {
   }
 };
 
-// POST /api/promos  (Admin)
+
 exports.createPromo = async (req, res) => {
   try {
     const promo = await promoService.createPromo(req.body);
@@ -30,7 +30,7 @@ exports.createPromo = async (req, res) => {
   }
 };
 
-// GET /api/promos  (Admin)
+
 exports.getAllPromos = async (req, res) => {
   try {
     const promos = await promoService.getAllPromos();
@@ -40,7 +40,7 @@ exports.getAllPromos = async (req, res) => {
   }
 };
 
-// PATCH /api/promos/:id  (Admin)
+
 exports.updatePromo = async (req, res) => {
   try {
     const promo = await promoService.updatePromo(req.params.id, req.body);
@@ -50,7 +50,7 @@ exports.updatePromo = async (req, res) => {
   }
 };
 
-// DELETE /api/promos/:id  (Admin)
+
 exports.deletePromo = async (req, res) => {
   try {
     await promoService.deletePromo(req.params.id);

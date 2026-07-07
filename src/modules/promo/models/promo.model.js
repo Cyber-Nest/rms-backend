@@ -16,11 +16,11 @@ const promoSchema = new mongoose.Schema(
       required: true,
     },
     discountValue: { type: Number, required: true, min: 0 },
-    minOrderAmount: { type: Number, default: 0 },   // min subtotal to apply
-    maxDiscount:    { type: Number, default: null },  // cap for percentage
-    usageLimit:     { type: Number, default: null },  // null = unlimited
+    minOrderAmount: { type: Number, default: 0 },   
+    maxDiscount:    { type: Number, default: null },  
+    usageLimit:     { type: Number, default: null },  
     usedCount:      { type: Number, default: 0 },
-    expiresAt:      { type: Date,   default: null },  // null = never expires
+    expiresAt:      { type: Date,   default: null },  
     isActive:       { type: Boolean, default: true },
   },
   { timestamps: true }

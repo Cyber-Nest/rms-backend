@@ -56,7 +56,7 @@ const productSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Pre-save hook to auto-generate sequential productId (M2000, M2001, etc.)
+
 productSchema.pre('save', async function() {
   if (this.isNew && !this.productId) {
     const Product = this.constructor;
@@ -74,7 +74,7 @@ productSchema.pre('save', async function() {
   }
 });
 
-// Virtual to map _id to id for frontend compatibility
+
 productSchema.virtual('id').get(function() {
   return this._id.toHexString();
 });
