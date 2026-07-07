@@ -127,9 +127,12 @@ exports.generateReceiptPdf = (order, res) => {
         doc.y,
         { align: "center", width: printableWidth },
       );
-    const typeStr = order.orderType
+    let typeStr = order.orderType
       ? order.orderType.replace("-", " ").toUpperCase()
       : "TAKEOUT";
+    if (order.orderSource === "online") {
+      typeStr = `ONLINE ${typeStr}`;
+    }
     doc
       .font("Helvetica-Bold")
       .fontSize(9)
@@ -618,6 +621,9 @@ exports.generateSalesSummaryReceiptPdf = (summary, dateStr, res) => {
     drawRow("Take-Out :", fmt(orderType.takeout));
     drawRow("Dine-In :", fmt(orderType.dineIn));
     drawRow("Drive Through :", fmt(orderType.driveThrough));
+    if (orderType.delivery !== undefined && orderType.delivery > 0) {
+      drawRow("Delivery :", fmt(orderType.delivery));
+    }
     doc.moveDown(0.2);
     drawRow("TOTAL :", fmt(orderType.total), true);
     doc.moveDown(0.4);

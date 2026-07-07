@@ -66,7 +66,7 @@ const orderSchema = new mongoose.Schema(
     orderNumber: { type: String, index: true },
     orderType: {
       type: String,
-      enum: ["takeout", "drive-through", "dine-in"],
+      enum: ["takeout", "drive-through", "dine-in", "delivery"],
       required: true,
     },
     orderSource: {
@@ -148,40 +148,38 @@ orderSchema.statics.generateOrderNumber = async function (
   orderType,
   scheduledAt,
 ) {
-  let targetDate;
-  if (scheduledAt) {
-    targetDate = new Date(scheduledAt);
-  } else {
-    targetDate = new Date();
-  }
+  const targetDate = scheduledAt ? new Date(scheduledAt) : new Date();
 
   const timezoneOffsetMinutes = targetDate.getTimezoneOffset();
   const localTime = new Date(targetDate.getTime() - timezoneOffsetMinutes * 60 * 1000);
   const dateString = localTime.toISOString().slice(0, 10); // "YYYY-MM-DD"
 
+  // Auto-reset counter to 0 if there are zero orders in the database for today
   const startOfDay = new Date(dateString + 'T00:00:00.000Z');
   startOfDay.setMinutes(startOfDay.getMinutes() + timezoneOffsetMinutes);
-
   const endOfDay = new Date(dateString + 'T23:59:59.999Z');
   endOfDay.setMinutes(endOfDay.getMinutes() + timezoneOffsetMinutes);
 
-  const todayOrders = await this.find({
-    createdAt: { $gte: startOfDay, $lte: endOfDay },
-    orderNumber: { $regex: /^\d+$/ }
-  })
-  .select("orderNumber")
-  .lean()
-  .exec();
+  const countToday = await this.countDocuments({
+    createdAt: { $gte: startOfDay, $lte: endOfDay }
+  });
 
-  let maxSeq = 100;
-  for (const ord of todayOrders) {
-    const num = parseInt(ord.orderNumber, 10);
-    if (!isNaN(num) && num > maxSeq) {
-      maxSeq = num;
-    }
+  if (countToday === 0) {
+    await OrderCounter.findOneAndUpdate(
+      { _id: dateString },
+      { $set: { count: 0 } },
+      { upsert: true }
+    );
   }
 
-  return String(maxSeq + 1);
+  const counter = await OrderCounter.findOneAndUpdate(
+    { _id: dateString },
+    { $inc: { count: 1 } },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+
+  const orderSeq = counter.count + 100;
+  return String(orderSeq);
 };
 
 orderSchema.statics.previewNextOrderNumber = async function (orderType) {
@@ -192,27 +190,20 @@ orderSchema.statics.previewNextOrderNumber = async function (orderType) {
 
   const startOfDay = new Date(dateString + 'T00:00:00.000Z');
   startOfDay.setMinutes(startOfDay.getMinutes() + timezoneOffsetMinutes);
-
   const endOfDay = new Date(dateString + 'T23:59:59.999Z');
   endOfDay.setMinutes(endOfDay.getMinutes() + timezoneOffsetMinutes);
 
-  const todayOrders = await this.find({
-    createdAt: { $gte: startOfDay, $lte: endOfDay },
-    orderNumber: { $regex: /^\d+$/ }
-  })
-  .select("orderNumber")
-  .lean()
-  .exec();
+  const countToday = await this.countDocuments({
+    createdAt: { $gte: startOfDay, $lte: endOfDay }
+  });
 
-  let maxSeq = 100;
-  for (const ord of todayOrders) {
-    const num = parseInt(ord.orderNumber, 10);
-    if (!isNaN(num) && num > maxSeq) {
-      maxSeq = num;
-    }
+  if (countToday === 0) {
+    return "101";
   }
 
-  return String(maxSeq + 1);
+  const counter = await OrderCounter.findOne({ _id: dateString });
+  const currentCount = counter ? counter.count : 0;
+  return String(currentCount + 101);
 };
 
 orderSchema.index({ createdAt: -1 });

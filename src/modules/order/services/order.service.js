@@ -10,6 +10,38 @@ const round2 = (num) => {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 };
 
+const buildDateFilter = (start, end) => {
+  if (start && end) {
+    return {
+      $or: [
+        { orderTiming: { $ne: "later" }, createdAt: { $gte: start, $lte: end } },
+        { orderTiming: "later", scheduledAt: { $gte: start, $lte: end } }
+      ]
+    };
+  } else if (start) {
+    return {
+      $or: [
+        { orderTiming: { $ne: "later" }, createdAt: { $gte: start } },
+        { orderTiming: "later", scheduledAt: { $gte: start } }
+      ]
+    };
+  } else if (end) {
+    return {
+      $or: [
+        { orderTiming: { $ne: "later" }, createdAt: { $lte: end } },
+        { orderTiming: "later", scheduledAt: { $lte: end } }
+      ]
+    };
+  }
+  return {};
+};
+
+const getOrderBusinessDate = (order) => {
+  return order.orderTiming === "later" && order.scheduledAt
+    ? new Date(order.scheduledAt)
+    : new Date(order.createdAt);
+};
+
 // ── Create Order ──────────────────────────────────────────────
 exports.createOrder = async (orderData) => {
   try {
@@ -70,29 +102,30 @@ exports.getAllOrders = async (filters = {}) => {
     if (filters.paymentStatus) query.paymentStatus = filters.paymentStatus;
 
     // Date filter: single date or range
+    let start = null;
+    let end = null;
     if (filters.startDate || filters.endDate) {
-      query.createdAt = {};
       if (filters.startDate) {
-        const start = new Date(filters.startDate);
+        start = new Date(filters.startDate);
         start.setHours(0, 0, 0, 0);
-        query.createdAt.$gte = start;
       }
       if (filters.endDate) {
-        const end = new Date(filters.endDate);
+        end = new Date(filters.endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
       }
     } else if (filters.date) {
-      const start = new Date(filters.date);
+      start = new Date(filters.date);
       start.setHours(0, 0, 0, 0);
-      const end = new Date(filters.date);
+      end = new Date(filters.date);
       end.setHours(23, 59, 59, 999);
-      query.createdAt = { $gte: start, $lte: end };
     }
+
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(query, dateFilter);
 
     const orders = await Order.find(query)
       .select(
-        "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items",
+        "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt",
       )
       .sort({ createdAt: -1 })
       .lean();
@@ -272,25 +305,26 @@ exports.updateOrderItems = async (id, updateData) => {
 exports.getSalesSummary = async (filters = {}) => {
   try {
     const query = {};
+    let start = null;
+    let end = null;
     if (filters.startDate || filters.endDate) {
-      query.createdAt = {};
       if (filters.startDate) {
-        const start = new Date(filters.startDate);
+        start = new Date(filters.startDate);
         start.setHours(0, 0, 0, 0);
-        query.createdAt.$gte = start;
       }
       if (filters.endDate) {
-        const end = new Date(filters.endDate);
+        end = new Date(filters.endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
       }
     } else if (filters.date) {
-      const start = new Date(filters.date);
+      start = new Date(filters.date);
       start.setHours(0, 0, 0, 0);
-      const end = new Date(filters.date);
+      end = new Date(filters.date);
       end.setHours(23, 59, 59, 999);
-      query.createdAt = { $gte: start, $lte: end };
     }
+
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(query, dateFilter);
 
     // Retrieve only necessary fields via database query projection
     const orders = await Order.find(query)
@@ -338,6 +372,7 @@ exports.getSalesSummary = async (filters = {}) => {
     let takeoutTotal = 0;
     let dineInTotal = 0;
     let driveThroughTotal = 0;
+    let deliveryTotal = 0;
 
     // Channels
     let onlineTotal = 0;
@@ -366,6 +401,8 @@ exports.getSalesSummary = async (filters = {}) => {
         else if (order.orderType === "dine-in") dineInTotal += order.total;
         else if (order.orderType === "drive-through")
           driveThroughTotal += order.total;
+        else if (order.orderType === "delivery")
+          deliveryTotal += order.total;
 
         // Channel
         if (order.orderSource === "online") onlineTotal += order.total;
@@ -521,6 +558,7 @@ exports.getSalesSummary = async (filters = {}) => {
         takeout: round2(takeoutTotal),
         dineIn: round2(dineInTotal),
         driveThrough: round2(driveThroughTotal),
+        delivery: round2(deliveryTotal),
         total: round2(grandTotal),
       },
       channelSummary: {
@@ -595,10 +633,9 @@ exports.getDashboardMetrics = async (filters = {}) => {
     past30DaysStart.setHours(0, 0, 0, 0);
 
     // Fetch all orders in the 30-day window in one query with projection
-    const orders30Days = await Order.find({
-      createdAt: { $gte: past30DaysStart, $lte: todayEnd }
-    })
-    .select("createdAt status total customer.phone customer.email items.name items.quantity")
+    const dateQuery = buildDateFilter(past30DaysStart, todayEnd);
+    const orders30Days = await Order.find(dateQuery)
+    .select("createdAt status total customer.phone customer.email items.name items.quantity orderTiming scheduledAt dueAt")
     .sort({ createdAt: 1 })
     .lean();
 
@@ -609,16 +646,16 @@ exports.getDashboardMetrics = async (filters = {}) => {
     const emailToEarliestDate = new Map();
 
     for (const order of orders30Days) {
-      const orderDate = new Date(order.createdAt);
+      const orderDate = getOrderBusinessDate(order);
       
       // Store earliest order date for phone and email
       const phone = order.customer?.phone?.trim();
       const email = order.customer?.email?.trim();
       if (phone && !phoneToEarliestDate.has(phone)) {
-        phoneToEarliestDate.set(phone, order.createdAt);
+        phoneToEarliestDate.set(phone, orderDate);
       }
       if (email && !emailToEarliestDate.has(email)) {
-        emailToEarliestDate.set(email, order.createdAt);
+        emailToEarliestDate.set(email, orderDate);
       }
 
       if (orderDate >= todayStart && orderDate <= todayEnd) {
@@ -643,6 +680,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
     let returningCustomers = 0;
 
     for (const order of todayOrders) {
+      const orderDate = getOrderBusinessDate(order);
       const phone = order.customer?.phone?.trim();
       const email = order.customer?.email?.trim();
       
@@ -651,13 +689,13 @@ exports.getDashboardMetrics = async (filters = {}) => {
         
         if (phone && phoneToEarliestDate.has(phone)) {
           const earliest = phoneToEarliestDate.get(phone);
-          if (new Date(earliest) < new Date(order.createdAt)) {
+          if (new Date(earliest) < orderDate) {
             hasPrev = true;
           }
         }
         if (!hasPrev && email && emailToEarliestDate.has(email)) {
           const earliest = emailToEarliestDate.get(email);
-          if (new Date(earliest) < new Date(order.createdAt)) {
+          if (new Date(earliest) < orderDate) {
             hasPrev = true;
           }
         }
@@ -683,7 +721,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
 
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     for (const order of nonCancelled30Days) {
-      const dayName = days[new Date(order.createdAt).getDay()];
+      const dayName = days[getOrderBusinessDate(order).getDay()];
       if (dayName in daysDataCounts) {
         daysDataCounts[dayName] += 1;
       }
@@ -757,7 +795,8 @@ exports.getUniqueCustomers = async (filters = {}) => {
       start.setHours(0, 0, 0, 0);
       const end = new Date(filters.date);
       end.setHours(23, 59, 59, 999);
-      matchQuery.createdAt = { $gte: start, $lte: end };
+      const dateFilter = buildDateFilter(start, end);
+      Object.assign(matchQuery, dateFilter);
     }
 
     pipeline.push({ $match: matchQuery });
@@ -891,6 +930,15 @@ exports.getReportsSummary = async () => {
                   $sum: {
                     $cond: [
                       { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "drive-through"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
+                deliveryTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "delivery"] }] },
                       "$total",
                       0
                     ]
@@ -1082,6 +1130,7 @@ exports.getReportsSummary = async () => {
         takeout: round2(totals.takeoutTotal),
         dineIn: round2(totals.dineInTotal),
         driveThrough: round2(totals.driveThroughTotal),
+        delivery: round2(totals.deliveryTotal),
         total: round2(totals.completedTotal)
       },
       channelSummary: {
@@ -1138,7 +1187,8 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
       start = new Date(todayStr + "T00:00:00.000Z");
       end = new Date(todayStr + "T23:59:59.999Z");
     }
-    matchQuery.createdAt = { $gte: start, $lte: end };
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(matchQuery, dateFilter);
 
     // 2. Perform aggregation on Order
     const aggregatedItems = await Order.aggregate([
@@ -1235,10 +1285,11 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
       start = new Date(todayStr + "T00:00:00.000Z");
       end = new Date(todayStr + "T23:59:59.999Z");
     }
-    matchQuery.createdAt = { $gte: start, $lte: end };
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(matchQuery, dateFilter);
 
     // Fetch matching orders
-    const orders = await Order.find(matchQuery).select("total createdAt").lean();
+    const orders = await Order.find(matchQuery).select("total createdAt orderTiming scheduledAt").lean();
 
     // Define hourly durations matching restaurant active hours (10 AM to 10 PM)
     const hourlySlots = [
@@ -1257,7 +1308,7 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
     ];
 
     for (const order of orders) {
-      const date = new Date(order.createdAt);
+      const date = getOrderBusinessDate(order);
       const hour = date.getHours();
 
       const slot = hourlySlots.find(s => hour >= s.startHour && hour < s.endHour);
@@ -1295,16 +1346,14 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
     }
 
     // Fetch all active orders (not cancelled)
-    const orders = await Order.find({
-      createdAt: { $gte: start, $lte: end },
-      status: { $ne: "cancelled" }
-    }).lean();
+    const ordersQuery = { status: { $ne: "cancelled" } };
+    Object.assign(ordersQuery, buildDateFilter(start, end));
+    const orders = await Order.find(ordersQuery).lean();
 
     // Fetch cancelled orders to calculate paid/unpaid cancelled counts
-    const cancelledOrders = await Order.find({
-      createdAt: { $gte: start, $lte: end },
-      status: "cancelled"
-    }).lean();
+    const cancelledQuery = { status: "cancelled" };
+    Object.assign(cancelledQuery, buildDateFilter(start, end));
+    const cancelledOrders = await Order.find(cancelledQuery).lean();
 
     // Fetch expenses
     const expenses = await Expense.find({
@@ -1330,8 +1379,8 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`; // MM/DD/YYYY
 
       // Filter data for this specific day
-      const dayOrders = orders.filter(o => o.createdAt && new Date(o.createdAt).toISOString().split("T")[0] === dateStr);
-      const dayCancelled = cancelledOrders.filter(o => o.createdAt && new Date(o.createdAt).toISOString().split("T")[0] === dateStr);
+      const dayOrders = orders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
+      const dayCancelled = cancelledOrders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
       const dayExpenses = expenses.filter(e => e.expenseDate && new Date(e.expenseDate).toISOString().split("T")[0] === dateStr);
       const dayDeposit = deposits.find(d => d.date === dateStr) || { cashAmount: 0, cardAmount: 0, accountPayAmount: 0 };
 
