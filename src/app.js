@@ -83,11 +83,13 @@ const { initMenuModule } = require("./modules/menu");
 const { initOrderModule } = require("./modules/order");
 const { initPromoModule } = require("./modules/promo");
 const { initExpenseModule } = require("./modules/expense");
+const { initPaymentModule } = require("./modules/payment");
 
 initMenuModule(app);
 initOrderModule(app);
 initPromoModule(app);
 initExpenseModule(app);
+initPaymentModule(app);
 
 // Health Check
 app.get("/api/health", (req, res) => {

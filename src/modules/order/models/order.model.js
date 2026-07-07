@@ -38,6 +38,10 @@ const paymentEntrySchema = new mongoose.Schema(
     personName: { type: String, default: "" }, // for split between people
     cashGiven: { type: Number, default: 0 }, // for cash
     changeGiven: { type: Number, default: 0 }, // for cash
+    transactionId: { type: String, default: "" },
+    cardBrand: { type: String, default: "" },
+    cardFunding: { type: String, default: "" },
+    cardLast4: { type: String, default: "" },
   },
   { _id: false },
 );

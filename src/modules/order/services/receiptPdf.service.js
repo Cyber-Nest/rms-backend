@@ -287,13 +287,19 @@ exports.generateReceiptPdf = (order, res) => {
     // Check payment history or payment method
     let isCardPayment = false;
     let cardInfo = {
-      acct: "INTERAC",
-      cardNum: "************5762",
+      acct: "CARD",
+      cardNum: "N/A",
       type: "CARD",
-      transNum: "1027-0_649",
-      aid: "0THB2O87P7ZOBIK",
+      transNum: order.paymentIntentId || "N/A",
+      aid: "N/A",
     };
     let cashInfo = { cashGiven: total, changeGiven: 0 };
+
+    if (order.orderSource === "online" || order.paymentMethod === "stripe") {
+      isCardPayment = true;
+      cardInfo.acct = "STRIPE CARD";
+      cardInfo.aid = "ONLINE_STRIPE";
+    }
 
     if (
       order.payments &&
@@ -305,6 +311,11 @@ exports.generateReceiptPdf = (order, res) => {
         ["card", "interac", "debit", "credit"].includes(p.method?.toLowerCase())
       ) {
         isCardPayment = true;
+        cardInfo.acct = p.cardBrand ? p.cardBrand.toUpperCase() : (order.orderSource === "online" ? "STRIPE CARD" : "INTERAC");
+        cardInfo.cardNum = p.cardLast4 ? `************${p.cardLast4}` : "N/A";
+        cardInfo.type = p.cardFunding ? p.cardFunding.toUpperCase() : "CARD";
+        cardInfo.transNum = p.transactionId ? p.transactionId : (order.paymentIntentId || "N/A");
+        cardInfo.aid = order.orderSource === "online" ? "ONLINE_STRIPE" : (p.cardBrand ? "CARD_PAYMENT" : "0THB2O87P7ZOBIK");
       } else if (p.method?.toLowerCase() === "cash") {
         isCardPayment = false;
         cashInfo.cashGiven = p.cashGiven || total;

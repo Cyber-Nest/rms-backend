@@ -4,6 +4,8 @@ const Category = require("../../menu/models/category.model");
 const Expense = require("../../expense/models/expense.model");
 const Deposit = require("../models/deposit.model");
 const logger = require("../../../shared/utils/logger");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY || "sk_test_mock");
+const Payment = require("../../payment/models/payment.model");
 
 const round2 = (num) => {
   if (typeof num !== "number" || isNaN(num)) return 0;
@@ -51,8 +53,37 @@ exports.createOrder = async (orderData) => {
     );
 
     // If pay-later → paymentStatus = unpaid, no payments array needed
-    const paymentStatus =
+    let paymentStatus =
       orderData.paymentTiming === "pay-later" ? "unpaid" : "paid";
+    let payments = orderData.payments || [];
+    let paymentIntent = null;
+
+    if (orderData.paymentMethod === "stripe" && orderData.paymentIntentId) {
+      // Query Stripe
+      paymentIntent = await stripe.paymentIntents.retrieve(orderData.paymentIntentId, {
+        expand: ["payment_method"]
+      });
+      if (paymentIntent.status !== "succeeded") {
+        throw new Error(`Stripe payment verification failed. Intent status: ${paymentIntent.status}`);
+      }
+
+      // Extract card brand, card type (funding), and last 4
+      const pmObj = paymentIntent.payment_method || {};
+      const cardDetails = pmObj.card || paymentIntent.charges?.data[0]?.payment_method_details?.card || {};
+      const cardBrand = cardDetails.brand || "";
+      const cardFunding = cardDetails.funding || "";
+      const cardLast4 = cardDetails.last4 || "";
+
+      paymentStatus = "paid";
+      payments = [{
+        method: "card",
+        amount: orderData.total,
+        transactionId: orderData.paymentIntentId,
+        cardBrand,
+        cardFunding,
+        cardLast4
+      }];
+    }
 
     let dueAt = orderData.dueAt;
     if (!dueAt) {
@@ -73,11 +104,36 @@ exports.createOrder = async (orderData) => {
           : { name: "No Name", phone: "", email: "" },
       orderNumber,
       paymentStatus,
+      payments,
       dueAt,
       statusHistory: [{ status: "pending", changedAt: new Date() }],
     });
 
     await order.save();
+
+    // Save Payment audit document in database
+    if (paymentIntent) {
+      const charge = paymentIntent.charges?.data[0] || {};
+      const cardDetails = charge.payment_method_details?.card || {};
+      const cardBrand = cardDetails.brand || "";
+      const cardFunding = cardDetails.funding || "";
+      const cardLast4 = cardDetails.last4 || "";
+
+      const paymentDoc = new Payment({
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        amount: order.total,
+        paymentMethod: "stripe",
+        status: "succeeded",
+        transactionId: orderData.paymentIntentId,
+        cardBrand,
+        cardFunding,
+        cardLast4,
+        rawStripeResponse: paymentIntent
+      });
+      await paymentDoc.save();
+    }
+
     logger.info(`Order created: ${orderNumber}`);
     return order;
   } catch (error) {
@@ -190,6 +246,20 @@ exports.markOrderPaid = async (id, payments) => {
 
     if (payments && payments.length > 0) {
       order.payments = [...(order.payments || []), ...payments];
+
+      // Save Payment documents in DB
+      for (const p of payments) {
+        const paymentDoc = new Payment({
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          amount: p.amount,
+          paymentMethod: p.method === "cash" ? "cash" : "card",
+          status: "succeeded",
+          cashGiven: p.cashGiven || 0,
+          changeGiven: p.changeGiven || 0
+        });
+        await paymentDoc.save();
+      }
     }
 
     const paymentsTotal = order.payments
@@ -381,6 +451,12 @@ exports.getSalesSummary = async (filters = {}) => {
     // Payment methods
     let cashTotal = 0;
     let cardTotal = 0;
+    let accountPayTotal = 0;
+    let visaTotal = 0;
+    let mastercardTotal = 0;
+    let interacTotal = 0;
+    let creditCardTotal = 0;
+    let debitCardTotal = 0;
 
     // Standard optimized loop (avoiding callback contexts)
     for (const order of orders) {
@@ -412,12 +488,30 @@ exports.getSalesSummary = async (filters = {}) => {
         if (order.paymentStatus === "paid") {
           if (order.payments && order.payments.length > 0) {
             for (const p of order.payments) {
-              if (p.method === "cash") cashTotal += p.amount;
-              else cardTotal += p.amount;
+              if (p.method === "cash") {
+                cashTotal += p.amount;
+              } else if (order.orderSource === "online" || p.method === "stripe") {
+                accountPayTotal += p.amount;
+              } else {
+                cardTotal += p.amount;
+                // Parse specific brand
+                const brand = p.cardBrand?.toLowerCase() || "";
+                if (brand === "visa") visaTotal += p.amount;
+                else if (brand === "mastercard") mastercardTotal += p.amount;
+                else interacTotal += p.amount;
+
+                const funding = p.cardFunding?.toLowerCase() || "";
+                if (funding === "credit") creditCardTotal += p.amount;
+                else debitCardTotal += p.amount;
+              }
             }
           } else {
             // fallback if payments array is missing/empty (e.g. old orders)
-            cashTotal += order.total;
+            if (order.orderSource === "online" || order.paymentMethod === "stripe") {
+              accountPayTotal += order.total;
+            } else {
+              cashTotal += order.total;
+            }
           }
         }
 
@@ -508,7 +602,7 @@ exports.getSalesSummary = async (filters = {}) => {
     if (deposit) {
       shortageOverageCash = deposit.cashAmount - adjustedExpectedCash;
       shortageOverageCard = deposit.cardAmount - cardTotal;
-      shortageOverageAccountPay = deposit.accountPayAmount - 0;
+      shortageOverageAccountPay = deposit.accountPayAmount - accountPayTotal;
     }
 
     return {
@@ -540,18 +634,18 @@ exports.getSalesSummary = async (filters = {}) => {
       },
       taxSummary: { pst: 0, gst: round2(grossTax), hst: 0, total: round2(grossTax) },
       salesReceived: {
-        accountPay: 0,
+        accountPay: round2(accountPayTotal),
         cash: round2(cashTotal),
-        creditCardSales: 0,
-        debitCardSales: round2(cardTotal),
+        creditCardSales: round2(creditCardTotal),
+        debitCardSales: round2(debitCardTotal),
         grandTotal: round2(grandTotal),
         tips: 0,
         finalAmount: round2(grandTotal),
       },
       cardTypeReceived: {
-        interac: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
-        mastercard: { total: 0, tips: 0, final: 0 },
-        visa: { total: 0, tips: 0, final: 0 },
+        interac: { total: round2(interacTotal), tips: 0, final: round2(interacTotal) },
+        mastercard: { total: round2(mastercardTotal), tips: 0, final: round2(mastercardTotal) },
+        visa: { total: round2(visaTotal), tips: 0, final: round2(visaTotal) },
         total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
       },
       orderTypeSummary: {
@@ -578,7 +672,7 @@ exports.getSalesSummary = async (filters = {}) => {
         card: round2(shortageOverageCard),
         accountPay: round2(shortageOverageAccountPay),
       },
-      moneyToBeCollected: { cash: round2(adjustedExpectedCash), card: round2(cardTotal), accountPay: 0 },
+      moneyToBeCollected: { cash: round2(adjustedExpectedCash), card: round2(cardTotal), accountPay: round2(accountPayTotal) },
       driverReport: [],
       deposit: deposit ? {
         cashAmount: round2(deposit.cashAmount),
@@ -975,6 +1069,7 @@ exports.getReportsSummary = async () => {
             {
               $project: {
                 total: 1,
+                orderSource: 1,
                 payments: {
                   $cond: [
                     { $gt: [{ $size: { $ifNull: ["$payments", []] } }, 0] },
@@ -987,7 +1082,12 @@ exports.getReportsSummary = async () => {
             { $unwind: "$payments" },
             {
               $group: {
-                _id: "$payments.method",
+                _id: {
+                  method: "$payments.method",
+                  brand: "$payments.cardBrand",
+                  funding: "$payments.cardFunding",
+                  orderSource: "$orderSource"
+                },
                 amount: { $sum: "$payments.amount" }
               }
             }
@@ -1042,12 +1142,32 @@ exports.getReportsSummary = async () => {
     // Calculate payment totals
     let cashTotal = 0;
     let cardTotal = 0;
+    let accountPayTotal = 0;
+    let visaTotal = 0;
+    let mastercardTotal = 0;
+    let interacTotal = 0;
+    let creditCardTotal = 0;
+    let debitCardTotal = 0;
+
     if (summaryResult?.payments) {
       for (const p of summaryResult.payments) {
-        if (p._id === "cash") {
+        const method = p._id?.method;
+        const brand = p._id?.brand?.toLowerCase() || "";
+        const funding = p._id?.funding?.toLowerCase() || "";
+        const orderSource = p._id?.orderSource;
+
+        if (orderSource === "online" || method === "stripe") {
+          accountPayTotal += p.amount;
+        } else if (method === "cash") {
           cashTotal += p.amount;
         } else {
           cardTotal += p.amount;
+          if (brand === "visa") visaTotal += p.amount;
+          else if (brand === "mastercard") mastercardTotal += p.amount;
+          else interacTotal += p.amount;
+
+          if (funding === "credit") creditCardTotal += p.amount;
+          else debitCardTotal += p.amount;
         }
       }
     }
@@ -1112,18 +1232,18 @@ exports.getReportsSummary = async () => {
         total: round2(totals.grossTax)
       },
       salesReceived: {
-        accountPay: 0,
+        accountPay: round2(accountPayTotal),
         cash: round2(cashTotal),
-        creditCardSales: 0,
-        debitCardSales: round2(cardTotal),
+        creditCardSales: round2(creditCardTotal),
+        debitCardSales: round2(debitCardTotal),
         grandTotal: round2(totals.completedTotal),
         tips: 0,
         finalAmount: round2(totals.completedTotal)
       },
       cardTypeReceived: {
-        interac: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
-        mastercard: { total: 0, tips: 0, final: 0 },
-        visa: { total: 0, tips: 0, final: 0 },
+        interac: { total: round2(interacTotal), tips: 0, final: round2(interacTotal) },
+        mastercard: { total: round2(mastercardTotal), tips: 0, final: round2(mastercardTotal) },
+        visa: { total: round2(visaTotal), tips: 0, final: round2(visaTotal) },
         total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) }
       },
       orderTypeSummary: {
