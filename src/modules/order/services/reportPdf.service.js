@@ -29,7 +29,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
     doc
       .font("Helvetica-Bold")
       .fontSize(20)
-      .fillColor("#F97316") // Brand primary color
+      .fillColor("#8a1538") // Brand primary color
       .text("Chicken Delight", 40, doc.y, { align: "center", width: printableWidth });
 
     doc
@@ -71,7 +71,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
       if (bgColor) {
         doc.rect(startX, rowY - 3, printableWidth, 15).fill(bgColor);
       }
-      doc.fillColor(bgColor === "#F97316" ? "#FFFFFF" : "#1C1917");
+      doc.fillColor(bgColor === "#8a1538" ? "#FFFFFF" : "#1C1917");
       doc.font(isBold ? "Helvetica-Bold" : "Helvetica").fontSize(8.5);
 
       let currentX = startX;
@@ -124,7 +124,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
       data.forEach((group) => {
         // Category header row
         const catRowY = doc.y;
-        doc.rect(startX, catRowY - 3, printableWidth, 15).fill("#F97316");
+        doc.rect(startX, catRowY - 3, printableWidth, 15).fill("#8a1538");
         doc
           .font("Helvetica-Bold")
           .fontSize(8.5)
@@ -202,7 +202,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
         widths,
         startX,
         true,
-        "#FED7AA"
+        "#f7cbd4"
       );
 
     } else if (type === "cash_out_summary") {
@@ -259,7 +259,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
         widths,
         startX,
         true,
-        "#FED7AA"
+        "#f7cbd4"
       );
 
     } else if (type === "monthly_sales_summary") {
@@ -349,7 +349,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
         widths,
         startX,
         true,
-        "#FED7AA"
+        "#f7cbd4"
       );
 
     } else if (type === "failed_transaction" || type === "refund_orders") {
@@ -407,7 +407,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
         widths,
         startX,
         true,
-        "#FED7AA"
+        "#f7cbd4"
       );
     }
 
