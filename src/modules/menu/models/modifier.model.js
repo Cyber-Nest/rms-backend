@@ -25,7 +25,7 @@ const modifierOptionSchema = new mongoose.Schema({
   }]
 });
 
-// Virtual to map _id to id for frontend compatibility
+
 modifierOptionSchema.virtual('id').get(function() {
   return this._id.toHexString();
 });
@@ -60,7 +60,7 @@ const modifierGroupSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Virtual to map _id to id
+
 modifierGroupSchema.virtual('id').get(function() {
   return this._id.toHexString();
 });

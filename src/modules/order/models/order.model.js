@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-// ── Sub-schemas ───────────────────────────────────────────────
+
 const selectedModifierSchema = new mongoose.Schema(
   {
     groupId: { type: String, required: true },
@@ -35,9 +35,9 @@ const paymentEntrySchema = new mongoose.Schema(
       required: true,
     },
     amount: { type: Number, required: true },
-    personName: { type: String, default: "" }, // for split between people
-    cashGiven: { type: Number, default: 0 }, // for cash
-    changeGiven: { type: Number, default: 0 }, // for cash
+    personName: { type: String, default: "" }, 
+    cashGiven: { type: Number, default: 0 }, 
+    changeGiven: { type: Number, default: 0 }, 
     transactionId: { type: String, default: "" },
     cardBrand: { type: String, default: "" },
     cardFunding: { type: String, default: "" },
@@ -57,14 +57,14 @@ const customerSchema = new mongoose.Schema(
   { _id: false },
 );
 
-// ── Order Counter helper (daily sequential) ───────────────────
+
 const OrderCounterSchema = new mongoose.Schema({
-  _id: { type: String }, // "YYYY-MM-DD"
+  _id: { type: String }, 
   count: { type: Number, default: 0 },
 });
 const OrderCounter = mongoose.model("OrderCounter", OrderCounterSchema);
 
-// ── Main Order Schema ─────────────────────────────────────────
+
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: { type: String, index: true },
@@ -79,12 +79,12 @@ const orderSchema = new mongoose.Schema(
       default: "pos",
     },
 
-    // Items
+    
     items: { type: [orderItemSchema], required: true },
 
-    // Financials
+    
     subtotal: { type: Number, required: true },
-    taxRate: { type: Number, default: 0.05 }, // 5% — admin configurable later
+    taxRate: { type: Number, default: 0.05 }, 
     tax: { type: Number, required: true },
     discount: { type: Number, default: 0 },
     discountType: {
@@ -95,7 +95,7 @@ const orderSchema = new mongoose.Schema(
     promoCode: { type: String, default: "" },
     total: { type: Number, required: true },
 
-    // Payment
+    
     paymentTiming: {
       type: String,
       enum: ["pay-now", "pay-later"],
@@ -113,7 +113,7 @@ const orderSchema = new mongoose.Schema(
     },
     payments: { type: [paymentEntrySchema], default: [] },
 
-    // Scheduling
+    
     orderTiming: {
       type: String,
       enum: ["now", "later"],
@@ -122,13 +122,13 @@ const orderSchema = new mongoose.Schema(
     scheduledAt: { type: Date, default: null },
     dueAt: { type: Date, default: null },
 
-    // Optional customer
+    
     customer: { type: customerSchema, default: null },
 
-    // Notes
+    
     notes: { type: String, default: "" },
 
-    // Status flow: pending → preparing → ready → completed
+    
     status: {
       type: String,
       enum: ["pending", "preparing", "ready", "completed", "cancelled"],
@@ -147,7 +147,7 @@ const orderSchema = new mongoose.Schema(
   },
 );
 
-// ── Static: Generate order number ─────────────────────────────
+
 orderSchema.statics.generateOrderNumber = async function (
   orderType,
   scheduledAt,
@@ -156,9 +156,9 @@ orderSchema.statics.generateOrderNumber = async function (
 
   const timezoneOffsetMinutes = targetDate.getTimezoneOffset();
   const localTime = new Date(targetDate.getTime() - timezoneOffsetMinutes * 60 * 1000);
-  const dateString = localTime.toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const dateString = localTime.toISOString().slice(0, 10); 
 
-  // Auto-reset counter to 0 if there are zero orders in the database for today
+  
   const startOfDay = new Date(dateString + 'T00:00:00.000Z');
   startOfDay.setMinutes(startOfDay.getMinutes() + timezoneOffsetMinutes);
   const endOfDay = new Date(dateString + 'T23:59:59.999Z');
@@ -190,7 +190,7 @@ orderSchema.statics.previewNextOrderNumber = async function (orderType) {
   const d = new Date();
   const timezoneOffsetMinutes = d.getTimezoneOffset();
   const localTime = new Date(d.getTime() - timezoneOffsetMinutes * 60 * 1000);
-  const dateString = localTime.toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const dateString = localTime.toISOString().slice(0, 10); 
 
   const startOfDay = new Date(dateString + 'T00:00:00.000Z');
   startOfDay.setMinutes(startOfDay.getMinutes() + timezoneOffsetMinutes);

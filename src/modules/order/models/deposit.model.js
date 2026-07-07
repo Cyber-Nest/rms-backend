@@ -6,7 +6,7 @@ const depositSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Deposit date is required'],
       unique: true,
-      index: true, // index for quick queries by date
+      index: true, 
     },
     cashAmount: {
       type: Number,

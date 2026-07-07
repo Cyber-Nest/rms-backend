@@ -1,13 +1,13 @@
 const menuService = require('../services/menu.service');
 const logger = require('../../../shared/utils/logger');
 
-// Unified Error Handler for Controller
+
 const handleError = (res, error, status = 400) => {
   logger.error(`Menu Controller Error: ${error.message}`);
   return res.status(status).json({ success: false, message: error.message });
 };
 
-// category controllers
+
 exports.getCategories = async (req, res) => {
   try {
     const categories = await menuService.getAllCategories();
@@ -46,7 +46,7 @@ exports.deleteCategory = async (req, res) => {
   }
 };
 
-// modifier controllers
+
 exports.getModifierGroups = async (req, res) => {
   try {
     const groups = await menuService.getAllModifierGroups();
@@ -75,7 +75,7 @@ exports.updateModifierGroup = async (req, res) => {
   }
 };
 
-// DELETE MODIFIER GROUP
+
 exports.deleteModifierGroup = async (req, res) => {
   try {
     const { id } = req.params;
@@ -86,7 +86,7 @@ exports.deleteModifierGroup = async (req, res) => {
   }
 };
 
-// product menu item controllers
+
 exports.getProducts = async (req, res) => {
   try {
     const products = await menuService.getAllProducts();
@@ -148,7 +148,7 @@ exports.deleteProduct = async (req, res) => {
   }
 };
 
-//pos public feed controllers
+
 exports.getPOSMenu = async (req, res) => {
   try {
     const feedData = await menuService.getPOSMenuFeed();
@@ -158,7 +158,7 @@ exports.getPOSMenu = async (req, res) => {
   }
 };
 
-// image upload controller
+
 exports.uploadImage = async (req, res) => {
   try {
     if (!req.file) {
@@ -176,7 +176,7 @@ exports.uploadImage = async (req, res) => {
   }
 };
 
-// DELETE IMAGE FROM CLOUDINARY
+
 exports.deleteImage = async (req, res) => {
   try {
     const { url } = req.body;

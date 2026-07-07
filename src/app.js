@@ -11,10 +11,10 @@ const logger = require("./shared/utils/logger");
 
 const app = express();
 
-// Connect Database
+
 connectDB();
 
-//Ensure database is connected before handling requests
+
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -30,7 +30,7 @@ app.use(async (req, res, next) => {
 
 app.use(helmet());
 
-// CORS Configuration
+
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3001",
@@ -69,11 +69,11 @@ app.use(
   }),
 );
 
-// Body Parser
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logger
+
 app.use(
   morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
     stream: {
@@ -82,7 +82,7 @@ app.use(
   }),
 );
 
-// Register Modules
+
 const { initMenuModule } = require("./modules/menu");
 const { initOrderModule } = require("./modules/order");
 const { initPromoModule } = require("./modules/promo");
@@ -95,7 +95,7 @@ initPromoModule(app);
 initExpenseModule(app);
 initPaymentModule(app);
 
-// Health Check
+
 app.get("/api/health", (req, res) => {
   res.status(200).json({
     status: "OK",

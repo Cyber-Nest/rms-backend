@@ -17,8 +17,8 @@ const connectDB = async () => {
   if (!cached.promise) {
     const opts = {
       bufferCommands: true,
-      maxPoolSize: 10, // Maintain up to 10 socket connections
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      maxPoolSize: 10, 
+      serverSelectionTimeoutMS: 5000, 
     };
 
     cached.promise = mongoose.connect(process.env.MONGODB_URI, opts).then((mongooseInstance) => {
@@ -26,7 +26,7 @@ const connectDB = async () => {
       return mongooseInstance;
     }).catch((error) => {
       logger.error(chalk.red.bold(`Database connection error: ${error.message}`));
-      cached.promise = null; // reset to try again on next invocation
+      cached.promise = null; 
       throw error;
     });
   }

@@ -1,30 +1,30 @@
 const Promo = require('../models/promo.model');
 const logger = require('../../../shared/utils/logger');
 
-// ── Validate & Apply Promo Code ───────────────────────────────
+
 exports.validatePromo = async (code, subtotal) => {
   try {
     const promo = await Promo.findOne({ code: code.toUpperCase(), isActive: true });
     if (!promo) throw new Error('Invalid or expired promo code.');
 
-    // Check expiry
+    
     if (promo.expiresAt && new Date() > promo.expiresAt) {
       throw new Error('This promo code has expired.');
     }
 
-    // Check usage limit
+    
     if (promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
       throw new Error('This promo code has reached its usage limit.');
     }
 
-    // Check minimum order amount
+    
     if (subtotal < promo.minOrderAmount) {
       throw new Error(
         `Minimum order of $${promo.minOrderAmount.toFixed(2)} required for this promo.`
       );
     }
 
-    // Calculate discount
+    
     let discountAmount = 0;
     if (promo.discountType === 'percentage') {
       discountAmount = (subtotal * promo.discountValue) / 100;
@@ -51,7 +51,7 @@ exports.validatePromo = async (code, subtotal) => {
   }
 };
 
-// ── Increment Usage Count ─────────────────────────────────────
+
 exports.incrementUsage = async (code) => {
   await Promo.findOneAndUpdate(
     { code: code.toUpperCase() },
@@ -59,7 +59,7 @@ exports.incrementUsage = async (code) => {
   );
 };
 
-// ── Admin CRUD ────────────────────────────────────────────────
+
 exports.createPromo = async (data) => {
   try {
     const promo = new Promo(data);
