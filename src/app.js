@@ -46,6 +46,10 @@ if (process.env.SUPER_ADMIN_FRONTEND_URL) {
   allowedOrigins.push(process.env.SUPER_ADMIN_FRONTEND_URL.trim());
 }
 
+if (process.env.USER_FRONTEND_URL) {
+  allowedOrigins.push(process.env.USER_FRONTEND_URL.trim());
+}
+
 app.use(
   cors({
     origin: (origin, callback) => {
