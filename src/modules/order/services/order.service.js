@@ -4,10 +4,44 @@ const Category = require("../../menu/models/category.model");
 const Expense = require("../../expense/models/expense.model");
 const Deposit = require("../models/deposit.model");
 const logger = require("../../../shared/utils/logger");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY || "sk_test_mock");
+const Payment = require("../../payment/models/payment.model");
 
 const round2 = (num) => {
   if (typeof num !== "number" || isNaN(num)) return 0;
   return Math.round((num + Number.EPSILON) * 100) / 100;
+};
+
+const buildDateFilter = (start, end) => {
+  if (start && end) {
+    return {
+      $or: [
+        { orderTiming: { $ne: "later" }, createdAt: { $gte: start, $lte: end } },
+        { orderTiming: "later", scheduledAt: { $gte: start, $lte: end } }
+      ]
+    };
+  } else if (start) {
+    return {
+      $or: [
+        { orderTiming: { $ne: "later" }, createdAt: { $gte: start } },
+        { orderTiming: "later", scheduledAt: { $gte: start } }
+      ]
+    };
+  } else if (end) {
+    return {
+      $or: [
+        { orderTiming: { $ne: "later" }, createdAt: { $lte: end } },
+        { orderTiming: "later", scheduledAt: { $lte: end } }
+      ]
+    };
+  }
+  return {};
+};
+
+const getOrderBusinessDate = (order) => {
+  return order.orderTiming === "later" && order.scheduledAt
+    ? new Date(order.scheduledAt)
+    : new Date(order.createdAt);
 };
 
 // ── Create Order ──────────────────────────────────────────────
@@ -19,8 +53,37 @@ exports.createOrder = async (orderData) => {
     );
 
     // If pay-later → paymentStatus = unpaid, no payments array needed
-    const paymentStatus =
+    let paymentStatus =
       orderData.paymentTiming === "pay-later" ? "unpaid" : "paid";
+    let payments = orderData.payments || [];
+    let paymentIntent = null;
+
+    if (orderData.paymentMethod === "stripe" && orderData.paymentIntentId) {
+      // Query Stripe
+      paymentIntent = await stripe.paymentIntents.retrieve(orderData.paymentIntentId, {
+        expand: ["payment_method"]
+      });
+      if (paymentIntent.status !== "succeeded") {
+        throw new Error(`Stripe payment verification failed. Intent status: ${paymentIntent.status}`);
+      }
+
+      // Extract card brand, card type (funding), and last 4
+      const pmObj = paymentIntent.payment_method || {};
+      const cardDetails = pmObj.card || paymentIntent.charges?.data[0]?.payment_method_details?.card || {};
+      const cardBrand = cardDetails.brand || "";
+      const cardFunding = cardDetails.funding || "";
+      const cardLast4 = cardDetails.last4 || "";
+
+      paymentStatus = "paid";
+      payments = [{
+        method: "card",
+        amount: orderData.total,
+        transactionId: orderData.paymentIntentId,
+        cardBrand,
+        cardFunding,
+        cardLast4
+      }];
+    }
 
     let dueAt = orderData.dueAt;
     if (!dueAt) {
@@ -41,11 +104,36 @@ exports.createOrder = async (orderData) => {
           : { name: "No Name", phone: "", email: "" },
       orderNumber,
       paymentStatus,
+      payments,
       dueAt,
       statusHistory: [{ status: "pending", changedAt: new Date() }],
     });
 
     await order.save();
+
+    // Save Payment audit document in database
+    if (paymentIntent) {
+      const charge = paymentIntent.charges?.data[0] || {};
+      const cardDetails = charge.payment_method_details?.card || {};
+      const cardBrand = cardDetails.brand || "";
+      const cardFunding = cardDetails.funding || "";
+      const cardLast4 = cardDetails.last4 || "";
+
+      const paymentDoc = new Payment({
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        amount: order.total,
+        paymentMethod: "stripe",
+        status: "succeeded",
+        transactionId: orderData.paymentIntentId,
+        cardBrand,
+        cardFunding,
+        cardLast4,
+        rawStripeResponse: paymentIntent
+      });
+      await paymentDoc.save();
+    }
+
     logger.info(`Order created: ${orderNumber}`);
     return order;
   } catch (error) {
@@ -70,29 +158,30 @@ exports.getAllOrders = async (filters = {}) => {
     if (filters.paymentStatus) query.paymentStatus = filters.paymentStatus;
 
     // Date filter: single date or range
+    let start = null;
+    let end = null;
     if (filters.startDate || filters.endDate) {
-      query.createdAt = {};
       if (filters.startDate) {
-        const start = new Date(filters.startDate);
+        start = new Date(filters.startDate);
         start.setHours(0, 0, 0, 0);
-        query.createdAt.$gte = start;
       }
       if (filters.endDate) {
-        const end = new Date(filters.endDate);
+        end = new Date(filters.endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
       }
     } else if (filters.date) {
-      const start = new Date(filters.date);
+      start = new Date(filters.date);
       start.setHours(0, 0, 0, 0);
-      const end = new Date(filters.date);
+      end = new Date(filters.date);
       end.setHours(23, 59, 59, 999);
-      query.createdAt = { $gte: start, $lte: end };
     }
+
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(query, dateFilter);
 
     const orders = await Order.find(query)
       .select(
-        "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items",
+        "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt",
       )
       .sort({ createdAt: -1 })
       .lean();
@@ -157,6 +246,20 @@ exports.markOrderPaid = async (id, payments) => {
 
     if (payments && payments.length > 0) {
       order.payments = [...(order.payments || []), ...payments];
+
+      // Save Payment documents in DB
+      for (const p of payments) {
+        const paymentDoc = new Payment({
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          amount: p.amount,
+          paymentMethod: p.method === "cash" ? "cash" : "card",
+          status: "succeeded",
+          cashGiven: p.cashGiven || 0,
+          changeGiven: p.changeGiven || 0
+        });
+        await paymentDoc.save();
+      }
     }
 
     const paymentsTotal = order.payments
@@ -272,25 +375,26 @@ exports.updateOrderItems = async (id, updateData) => {
 exports.getSalesSummary = async (filters = {}) => {
   try {
     const query = {};
+    let start = null;
+    let end = null;
     if (filters.startDate || filters.endDate) {
-      query.createdAt = {};
       if (filters.startDate) {
-        const start = new Date(filters.startDate);
+        start = new Date(filters.startDate);
         start.setHours(0, 0, 0, 0);
-        query.createdAt.$gte = start;
       }
       if (filters.endDate) {
-        const end = new Date(filters.endDate);
+        end = new Date(filters.endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
       }
     } else if (filters.date) {
-      const start = new Date(filters.date);
+      start = new Date(filters.date);
       start.setHours(0, 0, 0, 0);
-      const end = new Date(filters.date);
+      end = new Date(filters.date);
       end.setHours(23, 59, 59, 999);
-      query.createdAt = { $gte: start, $lte: end };
     }
+
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(query, dateFilter);
 
     // Retrieve only necessary fields via database query projection
     const orders = await Order.find(query)
@@ -338,6 +442,7 @@ exports.getSalesSummary = async (filters = {}) => {
     let takeoutTotal = 0;
     let dineInTotal = 0;
     let driveThroughTotal = 0;
+    let deliveryTotal = 0;
 
     // Channels
     let onlineTotal = 0;
@@ -346,6 +451,12 @@ exports.getSalesSummary = async (filters = {}) => {
     // Payment methods
     let cashTotal = 0;
     let cardTotal = 0;
+    let accountPayTotal = 0;
+    let visaTotal = 0;
+    let mastercardTotal = 0;
+    let interacTotal = 0;
+    let creditCardTotal = 0;
+    let debitCardTotal = 0;
 
     // Standard optimized loop (avoiding callback contexts)
     for (const order of orders) {
@@ -366,6 +477,8 @@ exports.getSalesSummary = async (filters = {}) => {
         else if (order.orderType === "dine-in") dineInTotal += order.total;
         else if (order.orderType === "drive-through")
           driveThroughTotal += order.total;
+        else if (order.orderType === "delivery")
+          deliveryTotal += order.total;
 
         // Channel
         if (order.orderSource === "online") onlineTotal += order.total;
@@ -375,12 +488,30 @@ exports.getSalesSummary = async (filters = {}) => {
         if (order.paymentStatus === "paid") {
           if (order.payments && order.payments.length > 0) {
             for (const p of order.payments) {
-              if (p.method === "cash") cashTotal += p.amount;
-              else cardTotal += p.amount;
+              if (p.method === "cash") {
+                cashTotal += p.amount;
+              } else if (order.orderSource === "online" || p.method === "stripe") {
+                accountPayTotal += p.amount;
+              } else {
+                cardTotal += p.amount;
+                // Parse specific brand
+                const brand = p.cardBrand?.toLowerCase() || "";
+                if (brand === "visa") visaTotal += p.amount;
+                else if (brand === "mastercard") mastercardTotal += p.amount;
+                else interacTotal += p.amount;
+
+                const funding = p.cardFunding?.toLowerCase() || "";
+                if (funding === "credit") creditCardTotal += p.amount;
+                else debitCardTotal += p.amount;
+              }
             }
           } else {
             // fallback if payments array is missing/empty (e.g. old orders)
-            cashTotal += order.total;
+            if (order.orderSource === "online" || order.paymentMethod === "stripe") {
+              accountPayTotal += order.total;
+            } else {
+              cashTotal += order.total;
+            }
           }
         }
 
@@ -471,7 +602,7 @@ exports.getSalesSummary = async (filters = {}) => {
     if (deposit) {
       shortageOverageCash = deposit.cashAmount - adjustedExpectedCash;
       shortageOverageCard = deposit.cardAmount - cardTotal;
-      shortageOverageAccountPay = deposit.accountPayAmount - 0;
+      shortageOverageAccountPay = deposit.accountPayAmount - accountPayTotal;
     }
 
     return {
@@ -503,24 +634,25 @@ exports.getSalesSummary = async (filters = {}) => {
       },
       taxSummary: { pst: 0, gst: round2(grossTax), hst: 0, total: round2(grossTax) },
       salesReceived: {
-        accountPay: 0,
+        accountPay: round2(accountPayTotal),
         cash: round2(cashTotal),
-        creditCardSales: 0,
-        debitCardSales: round2(cardTotal),
+        creditCardSales: round2(creditCardTotal),
+        debitCardSales: round2(debitCardTotal),
         grandTotal: round2(grandTotal),
         tips: 0,
         finalAmount: round2(grandTotal),
       },
       cardTypeReceived: {
-        interac: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
-        mastercard: { total: 0, tips: 0, final: 0 },
-        visa: { total: 0, tips: 0, final: 0 },
+        interac: { total: round2(interacTotal), tips: 0, final: round2(interacTotal) },
+        mastercard: { total: round2(mastercardTotal), tips: 0, final: round2(mastercardTotal) },
+        visa: { total: round2(visaTotal), tips: 0, final: round2(visaTotal) },
         total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
       },
       orderTypeSummary: {
         takeout: round2(takeoutTotal),
         dineIn: round2(dineInTotal),
         driveThrough: round2(driveThroughTotal),
+        delivery: round2(deliveryTotal),
         total: round2(grandTotal),
       },
       channelSummary: {
@@ -540,7 +672,7 @@ exports.getSalesSummary = async (filters = {}) => {
         card: round2(shortageOverageCard),
         accountPay: round2(shortageOverageAccountPay),
       },
-      moneyToBeCollected: { cash: round2(adjustedExpectedCash), card: round2(cardTotal), accountPay: 0 },
+      moneyToBeCollected: { cash: round2(adjustedExpectedCash), card: round2(cardTotal), accountPay: round2(accountPayTotal) },
       driverReport: [],
       deposit: deposit ? {
         cashAmount: round2(deposit.cashAmount),
@@ -595,10 +727,9 @@ exports.getDashboardMetrics = async (filters = {}) => {
     past30DaysStart.setHours(0, 0, 0, 0);
 
     // Fetch all orders in the 30-day window in one query with projection
-    const orders30Days = await Order.find({
-      createdAt: { $gte: past30DaysStart, $lte: todayEnd }
-    })
-    .select("createdAt status total customer.phone customer.email items.name items.quantity")
+    const dateQuery = buildDateFilter(past30DaysStart, todayEnd);
+    const orders30Days = await Order.find(dateQuery)
+    .select("createdAt status total customer.phone customer.email items.name items.quantity orderTiming scheduledAt dueAt")
     .sort({ createdAt: 1 })
     .lean();
 
@@ -609,16 +740,16 @@ exports.getDashboardMetrics = async (filters = {}) => {
     const emailToEarliestDate = new Map();
 
     for (const order of orders30Days) {
-      const orderDate = new Date(order.createdAt);
+      const orderDate = getOrderBusinessDate(order);
       
       // Store earliest order date for phone and email
       const phone = order.customer?.phone?.trim();
       const email = order.customer?.email?.trim();
       if (phone && !phoneToEarliestDate.has(phone)) {
-        phoneToEarliestDate.set(phone, order.createdAt);
+        phoneToEarliestDate.set(phone, orderDate);
       }
       if (email && !emailToEarliestDate.has(email)) {
-        emailToEarliestDate.set(email, order.createdAt);
+        emailToEarliestDate.set(email, orderDate);
       }
 
       if (orderDate >= todayStart && orderDate <= todayEnd) {
@@ -643,6 +774,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
     let returningCustomers = 0;
 
     for (const order of todayOrders) {
+      const orderDate = getOrderBusinessDate(order);
       const phone = order.customer?.phone?.trim();
       const email = order.customer?.email?.trim();
       
@@ -651,13 +783,13 @@ exports.getDashboardMetrics = async (filters = {}) => {
         
         if (phone && phoneToEarliestDate.has(phone)) {
           const earliest = phoneToEarliestDate.get(phone);
-          if (new Date(earliest) < new Date(order.createdAt)) {
+          if (new Date(earliest) < orderDate) {
             hasPrev = true;
           }
         }
         if (!hasPrev && email && emailToEarliestDate.has(email)) {
           const earliest = emailToEarliestDate.get(email);
-          if (new Date(earliest) < new Date(order.createdAt)) {
+          if (new Date(earliest) < orderDate) {
             hasPrev = true;
           }
         }
@@ -683,7 +815,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
 
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     for (const order of nonCancelled30Days) {
-      const dayName = days[new Date(order.createdAt).getDay()];
+      const dayName = days[getOrderBusinessDate(order).getDay()];
       if (dayName in daysDataCounts) {
         daysDataCounts[dayName] += 1;
       }
@@ -757,7 +889,8 @@ exports.getUniqueCustomers = async (filters = {}) => {
       start.setHours(0, 0, 0, 0);
       const end = new Date(filters.date);
       end.setHours(23, 59, 59, 999);
-      matchQuery.createdAt = { $gte: start, $lte: end };
+      const dateFilter = buildDateFilter(start, end);
+      Object.assign(matchQuery, dateFilter);
     }
 
     pipeline.push({ $match: matchQuery });
@@ -896,6 +1029,15 @@ exports.getReportsSummary = async () => {
                     ]
                   }
                 },
+                deliveryTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "delivery"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
                 onlineTotal: {
                   $sum: {
                     $cond: [
@@ -927,6 +1069,7 @@ exports.getReportsSummary = async () => {
             {
               $project: {
                 total: 1,
+                orderSource: 1,
                 payments: {
                   $cond: [
                     { $gt: [{ $size: { $ifNull: ["$payments", []] } }, 0] },
@@ -939,7 +1082,12 @@ exports.getReportsSummary = async () => {
             { $unwind: "$payments" },
             {
               $group: {
-                _id: "$payments.method",
+                _id: {
+                  method: "$payments.method",
+                  brand: "$payments.cardBrand",
+                  funding: "$payments.cardFunding",
+                  orderSource: "$orderSource"
+                },
                 amount: { $sum: "$payments.amount" }
               }
             }
@@ -994,12 +1142,32 @@ exports.getReportsSummary = async () => {
     // Calculate payment totals
     let cashTotal = 0;
     let cardTotal = 0;
+    let accountPayTotal = 0;
+    let visaTotal = 0;
+    let mastercardTotal = 0;
+    let interacTotal = 0;
+    let creditCardTotal = 0;
+    let debitCardTotal = 0;
+
     if (summaryResult?.payments) {
       for (const p of summaryResult.payments) {
-        if (p._id === "cash") {
+        const method = p._id?.method;
+        const brand = p._id?.brand?.toLowerCase() || "";
+        const funding = p._id?.funding?.toLowerCase() || "";
+        const orderSource = p._id?.orderSource;
+
+        if (orderSource === "online" || method === "stripe") {
+          accountPayTotal += p.amount;
+        } else if (method === "cash") {
           cashTotal += p.amount;
         } else {
           cardTotal += p.amount;
+          if (brand === "visa") visaTotal += p.amount;
+          else if (brand === "mastercard") mastercardTotal += p.amount;
+          else interacTotal += p.amount;
+
+          if (funding === "credit") creditCardTotal += p.amount;
+          else debitCardTotal += p.amount;
         }
       }
     }
@@ -1064,24 +1232,25 @@ exports.getReportsSummary = async () => {
         total: round2(totals.grossTax)
       },
       salesReceived: {
-        accountPay: 0,
+        accountPay: round2(accountPayTotal),
         cash: round2(cashTotal),
-        creditCardSales: 0,
-        debitCardSales: round2(cardTotal),
+        creditCardSales: round2(creditCardTotal),
+        debitCardSales: round2(debitCardTotal),
         grandTotal: round2(totals.completedTotal),
         tips: 0,
         finalAmount: round2(totals.completedTotal)
       },
       cardTypeReceived: {
-        interac: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
-        mastercard: { total: 0, tips: 0, final: 0 },
-        visa: { total: 0, tips: 0, final: 0 },
+        interac: { total: round2(interacTotal), tips: 0, final: round2(interacTotal) },
+        mastercard: { total: round2(mastercardTotal), tips: 0, final: round2(mastercardTotal) },
+        visa: { total: round2(visaTotal), tips: 0, final: round2(visaTotal) },
         total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) }
       },
       orderTypeSummary: {
         takeout: round2(totals.takeoutTotal),
         dineIn: round2(totals.dineInTotal),
         driveThrough: round2(totals.driveThroughTotal),
+        delivery: round2(totals.deliveryTotal),
         total: round2(totals.completedTotal)
       },
       channelSummary: {
@@ -1138,7 +1307,8 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
       start = new Date(todayStr + "T00:00:00.000Z");
       end = new Date(todayStr + "T23:59:59.999Z");
     }
-    matchQuery.createdAt = { $gte: start, $lte: end };
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(matchQuery, dateFilter);
 
     // 2. Perform aggregation on Order
     const aggregatedItems = await Order.aggregate([
@@ -1235,10 +1405,11 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
       start = new Date(todayStr + "T00:00:00.000Z");
       end = new Date(todayStr + "T23:59:59.999Z");
     }
-    matchQuery.createdAt = { $gte: start, $lte: end };
+    const dateFilter = buildDateFilter(start, end);
+    Object.assign(matchQuery, dateFilter);
 
     // Fetch matching orders
-    const orders = await Order.find(matchQuery).select("total createdAt").lean();
+    const orders = await Order.find(matchQuery).select("total createdAt orderTiming scheduledAt").lean();
 
     // Define hourly durations matching restaurant active hours (10 AM to 10 PM)
     const hourlySlots = [
@@ -1257,7 +1428,7 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
     ];
 
     for (const order of orders) {
-      const date = new Date(order.createdAt);
+      const date = getOrderBusinessDate(order);
       const hour = date.getHours();
 
       const slot = hourlySlots.find(s => hour >= s.startHour && hour < s.endHour);
@@ -1295,16 +1466,14 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
     }
 
     // Fetch all active orders (not cancelled)
-    const orders = await Order.find({
-      createdAt: { $gte: start, $lte: end },
-      status: { $ne: "cancelled" }
-    }).lean();
+    const ordersQuery = { status: { $ne: "cancelled" } };
+    Object.assign(ordersQuery, buildDateFilter(start, end));
+    const orders = await Order.find(ordersQuery).lean();
 
     // Fetch cancelled orders to calculate paid/unpaid cancelled counts
-    const cancelledOrders = await Order.find({
-      createdAt: { $gte: start, $lte: end },
-      status: "cancelled"
-    }).lean();
+    const cancelledQuery = { status: "cancelled" };
+    Object.assign(cancelledQuery, buildDateFilter(start, end));
+    const cancelledOrders = await Order.find(cancelledQuery).lean();
 
     // Fetch expenses
     const expenses = await Expense.find({
@@ -1330,8 +1499,8 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`; // MM/DD/YYYY
 
       // Filter data for this specific day
-      const dayOrders = orders.filter(o => o.createdAt && new Date(o.createdAt).toISOString().split("T")[0] === dateStr);
-      const dayCancelled = cancelledOrders.filter(o => o.createdAt && new Date(o.createdAt).toISOString().split("T")[0] === dateStr);
+      const dayOrders = orders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
+      const dayCancelled = cancelledOrders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
       const dayExpenses = expenses.filter(e => e.expenseDate && new Date(e.expenseDate).toISOString().split("T")[0] === dateStr);
       const dayDeposit = deposits.find(d => d.date === dateStr) || { cashAmount: 0, cardAmount: 0, accountPayAmount: 0 };
 
