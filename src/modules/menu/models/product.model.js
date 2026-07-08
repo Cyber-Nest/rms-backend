@@ -81,4 +81,8 @@ productSchema.virtual('id').get(function() {
 productSchema.set('toJSON', { virtuals: true });
 productSchema.set('toObject', { virtuals: true });
 
+productSchema.index({ categoryId: 1 });
+productSchema.index({ isActive: 1 });
+productSchema.index({ name: 1 });
+
 module.exports = mongoose.model('Product', productSchema);
