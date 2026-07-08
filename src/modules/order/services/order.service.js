@@ -6,6 +6,7 @@ const Deposit = require("../models/deposit.model");
 const logger = require("../../../shared/utils/logger");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY || "sk_test_mock");
 const Payment = require("../../payment/models/payment.model");
+const { triggerNewOrder } = require("../../../config/pusher");
 
 const round2 = (num) => {
   if (typeof num !== "number" || isNaN(num)) return 0;
@@ -110,6 +111,11 @@ exports.createOrder = async (orderData) => {
     });
 
     await order.save();
+
+    // Trigger real-time notification to Kitchen via Pusher
+    triggerNewOrder(order).catch((err) => {
+      logger.error(`Error triggering real-time Pusher event: ${err.message}`);
+    });
 
     // Save Payment audit document in database
     if (paymentIntent) {

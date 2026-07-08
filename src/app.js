@@ -12,7 +12,6 @@ const logger = require("./shared/utils/logger");
 const app = express();
 
 
-connectDB();
 
 
 app.use(async (req, res, next) => {
