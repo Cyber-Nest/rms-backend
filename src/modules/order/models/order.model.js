@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { getLocalDateStr, getLocalStartOfDay, getLocalEndOfDay } = require("../../../shared/utils/timezone");
 
 
 const selectedModifierSchema = new mongoose.Schema(
@@ -154,15 +155,12 @@ orderSchema.statics.generateOrderNumber = async function (
 ) {
   const targetDate = scheduledAt ? new Date(scheduledAt) : new Date();
 
-  const timezoneOffsetMinutes = targetDate.getTimezoneOffset();
-  const localTime = new Date(targetDate.getTime() - timezoneOffsetMinutes * 60 * 1000);
-  const dateString = localTime.toISOString().slice(0, 10); 
+  // Get date string in local timezone
+  const dateString = getLocalDateStr(targetDate);
 
-  
-  const startOfDay = new Date(dateString + 'T00:00:00.000Z');
-  startOfDay.setMinutes(startOfDay.getMinutes() + timezoneOffsetMinutes);
-  const endOfDay = new Date(dateString + 'T23:59:59.999Z');
-  endOfDay.setMinutes(endOfDay.getMinutes() + timezoneOffsetMinutes);
+  // Get local day boundaries as UTC Date objects
+  const startOfDay = getLocalStartOfDay(dateString);
+  const endOfDay = getLocalEndOfDay(dateString);
 
   const countToday = await this.countDocuments({
     createdAt: { $gte: startOfDay, $lte: endOfDay }
@@ -187,15 +185,12 @@ orderSchema.statics.generateOrderNumber = async function (
 };
 
 orderSchema.statics.previewNextOrderNumber = async function (orderType) {
-  const d = new Date();
-  const timezoneOffsetMinutes = d.getTimezoneOffset();
-  const localTime = new Date(d.getTime() - timezoneOffsetMinutes * 60 * 1000);
-  const dateString = localTime.toISOString().slice(0, 10); 
+  // Get date string in local timezone
+  const dateString = getLocalDateStr();
 
-  const startOfDay = new Date(dateString + 'T00:00:00.000Z');
-  startOfDay.setMinutes(startOfDay.getMinutes() + timezoneOffsetMinutes);
-  const endOfDay = new Date(dateString + 'T23:59:59.999Z');
-  endOfDay.setMinutes(endOfDay.getMinutes() + timezoneOffsetMinutes);
+  // Get local day boundaries as UTC Date objects
+  const startOfDay = getLocalStartOfDay(dateString);
+  const endOfDay = getLocalEndOfDay(dateString);
 
   const countToday = await this.countDocuments({
     createdAt: { $gte: startOfDay, $lte: endOfDay }

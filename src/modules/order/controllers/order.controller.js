@@ -3,6 +3,7 @@ const receiptPdfService = require('../services/receiptPdf.service');
 const reportPdfService = require('../services/reportPdf.service');
 const reportExcelService = require('../services/reportExcel.service');
 const logger = require('../../../shared/utils/logger');
+const { getLocalDateStr } = require('../../../shared/utils/timezone');
 
 const formatDateOnly = (dateStr) => {
   if (!dateStr) return "";
@@ -307,7 +308,7 @@ exports.downloadSalesSummaryPdf = async (req, res) => {
     const { date, startDate, endDate } = req.query;
     const summary = await orderService.getSalesSummary({ date, startDate, endDate });
 
-    const fileDateStr = date || startDate || new Date().toISOString().split("T")[0];
+    const fileDateStr = date || startDate || getLocalDateStr();
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename=sales-summary-${fileDateStr}.pdf`);

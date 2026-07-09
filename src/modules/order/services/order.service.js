@@ -4,6 +4,7 @@ const Category = require("../../menu/models/category.model");
 const Expense = require("../../expense/models/expense.model");
 const Deposit = require("../models/deposit.model");
 const logger = require("../../../shared/utils/logger");
+const { getLocalDateStr, getLocalStartOfDay, getLocalEndOfDay, getLocalHour, getLocalDayName } = require("../../../shared/utils/timezone");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY || "sk_test_mock");
 const Payment = require("../../payment/models/payment.model");
 const { triggerNewOrder } = require("../../../config/pusher");
@@ -163,23 +164,19 @@ exports.getAllOrders = async (filters = {}) => {
     if (filters.orderType) query.orderType = filters.orderType;
     if (filters.paymentStatus) query.paymentStatus = filters.paymentStatus;
 
-    // Date filter: single date or range
+    // Date filter: single date or range (Local timezone boundaries)
     let start = null;
     let end = null;
     if (filters.startDate || filters.endDate) {
       if (filters.startDate) {
-        start = new Date(filters.startDate);
-        start.setHours(0, 0, 0, 0);
+        start = getLocalStartOfDay(filters.startDate);
       }
       if (filters.endDate) {
-        end = new Date(filters.endDate);
-        end.setHours(23, 59, 59, 999);
+        end = getLocalEndOfDay(filters.endDate);
       }
     } else if (filters.date) {
-      start = new Date(filters.date);
-      start.setHours(0, 0, 0, 0);
-      end = new Date(filters.date);
-      end.setHours(23, 59, 59, 999);
+      start = getLocalStartOfDay(filters.date);
+      end = getLocalEndOfDay(filters.date);
     }
 
     const dateFilter = buildDateFilter(start, end);
@@ -385,18 +382,14 @@ exports.getSalesSummary = async (filters = {}) => {
     let end = null;
     if (filters.startDate || filters.endDate) {
       if (filters.startDate) {
-        start = new Date(filters.startDate);
-        start.setHours(0, 0, 0, 0);
+        start = getLocalStartOfDay(filters.startDate);
       }
       if (filters.endDate) {
-        end = new Date(filters.endDate);
-        end.setHours(23, 59, 59, 999);
+        end = getLocalEndOfDay(filters.endDate);
       }
     } else if (filters.date) {
-      start = new Date(filters.date);
-      start.setHours(0, 0, 0, 0);
-      end = new Date(filters.date);
-      end.setHours(23, 59, 59, 999);
+      start = getLocalStartOfDay(filters.date);
+      end = getLocalEndOfDay(filters.date);
     }
 
     const dateFilter = buildDateFilter(start, end);
@@ -545,7 +538,7 @@ exports.getSalesSummary = async (filters = {}) => {
     } else if (filters.startDate) {
       targetDateStr = String(filters.startDate).split("T")[0];
     } else {
-      targetDateStr = new Date().toISOString().split("T")[0];
+      targetDateStr = getLocalDateStr();
     }
 
     const deposit = await Deposit.findOne({ date: targetDateStr }).lean();
@@ -717,20 +710,18 @@ exports.saveDeposit = async (depositData) => {
 
 exports.getDashboardMetrics = async (filters = {}) => {
   try {
-    const targetDateStr = filters.date || new Date().toISOString().split("T")[0];
+    const targetDateStr = filters.date || getLocalDateStr();
     
-    
-    const targetDate = new Date(targetDateStr);
-    
-    const todayStart = new Date(targetDate);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(targetDate);
-    todayEnd.setHours(23, 59, 59, 999);
+    // Use local timezone day boundaries
+    const todayStart = getLocalStartOfDay(targetDateStr);
+    const todayEnd = getLocalEndOfDay(targetDateStr);
 
-    
-    const past30DaysStart = new Date(targetDate);
-    past30DaysStart.setDate(past30DaysStart.getDate() - 30);
-    past30DaysStart.setHours(0, 0, 0, 0);
+    // Calculate 30 days ago in local timezone
+    const targetDate = new Date(targetDateStr);
+    const past30Date = new Date(targetDate);
+    past30Date.setDate(past30Date.getDate() - 30);
+    const past30DateStr = past30Date.toISOString().slice(0, 10);
+    const past30DaysStart = getLocalStartOfDay(past30DateStr);
 
     
     const dateQuery = buildDateFilter(past30DaysStart, todayEnd);
@@ -819,9 +810,8 @@ exports.getDashboardMetrics = async (filters = {}) => {
       Sunday: 0
     };
 
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     for (const order of nonCancelled30Days) {
-      const dayName = days[getOrderBusinessDate(order).getDay()];
+      const dayName = getLocalDayName(getOrderBusinessDate(order));
       if (dayName in daysDataCounts) {
         daysDataCounts[dayName] += 1;
       }
@@ -891,10 +881,8 @@ exports.getUniqueCustomers = async (filters = {}) => {
 
     
     if (filters.date) {
-      const start = new Date(filters.date);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(filters.date);
-      end.setHours(23, 59, 59, 999);
+      const start = getLocalStartOfDay(filters.date);
+      const end = getLocalEndOfDay(filters.date);
       const dateFilter = buildDateFilter(start, end);
       Object.assign(matchQuery, dateFilter);
     }
@@ -1302,16 +1290,12 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
     const matchQuery = { status: { $ne: "cancelled" } };
     let start, end;
     if (startDate && endDate) {
-      start = new Date(startDate + "T00:00:00.000Z");
-      end = new Date(endDate + "T23:59:59.999Z");
+      start = getLocalStartOfDay(startDate);
+      end = getLocalEndOfDay(endDate);
     } else {
-      
-      const d = new Date();
-      const timezoneOffsetMinutes = d.getTimezoneOffset();
-      const localTime = new Date(d.getTime() - timezoneOffsetMinutes * 60 * 1000);
-      const todayStr = localTime.toISOString().slice(0, 10);
-      start = new Date(todayStr + "T00:00:00.000Z");
-      end = new Date(todayStr + "T23:59:59.999Z");
+      const todayStr = getLocalDateStr();
+      start = getLocalStartOfDay(todayStr);
+      end = getLocalEndOfDay(todayStr);
     }
     const dateFilter = buildDateFilter(start, end);
     Object.assign(matchQuery, dateFilter);
@@ -1400,15 +1384,12 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
     const matchQuery = { status: { $ne: "cancelled" } };
     let start, end;
     if (startDate && endDate) {
-      start = new Date(startDate + "T00:00:00.000Z");
-      end = new Date(endDate + "T23:59:59.999Z");
+      start = getLocalStartOfDay(startDate);
+      end = getLocalEndOfDay(endDate);
     } else {
-      const d = new Date();
-      const timezoneOffsetMinutes = d.getTimezoneOffset();
-      const localTime = new Date(d.getTime() - timezoneOffsetMinutes * 60 * 1000);
-      const todayStr = localTime.toISOString().slice(0, 10);
-      start = new Date(todayStr + "T00:00:00.000Z");
-      end = new Date(todayStr + "T23:59:59.999Z");
+      const todayStr = getLocalDateStr();
+      start = getLocalStartOfDay(todayStr);
+      end = getLocalEndOfDay(todayStr);
     }
     const dateFilter = buildDateFilter(start, end);
     Object.assign(matchQuery, dateFilter);
@@ -1434,7 +1415,7 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
 
     for (const order of orders) {
       const date = getOrderBusinessDate(order);
-      const hour = date.getHours();
+      const hour = getLocalHour(date);
 
       const slot = hourlySlots.find(s => hour >= s.startHour && hour < s.endHour);
       if (slot) {
@@ -1459,15 +1440,15 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
   try {
     let start, end;
     if (startDate && endDate) {
-      start = new Date(startDate + "T00:00:00.000Z");
-      end = new Date(endDate + "T23:59:59.999Z");
+      start = getLocalStartOfDay(startDate);
+      end = getLocalEndOfDay(endDate);
     } else {
-      // Default to current month
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, "0");
-      start = new Date(`${year}-${month}-01T00:00:00.000Z`);
-      end = new Date(now.toISOString().split("T")[0] + "T23:59:59.999Z");
+      // Default to current month in local timezone
+      const todayStr = getLocalDateStr();
+      const parts = todayStr.split("-");
+      const firstOfMonth = `${parts[0]}-${parts[1]}-01`;
+      start = getLocalStartOfDay(firstOfMonth);
+      end = getLocalEndOfDay(todayStr);
     }
 
     // Fetch all active orders (not cancelled)
@@ -1488,15 +1469,18 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
     
     const deposits = await Deposit.find({
       date: {
-        $gte: start.toISOString().split("T")[0],
-        $lte: end.toISOString().split("T")[0]
+        $gte: startDate || getLocalDateStr(start),
+        $lte: endDate || getLocalDateStr(end)
       }
     }).lean();
 
     
     const result = [];
-    const currentDate = new Date(start);
-    const stopDate = new Date(end);
+    // Iterate day by day using local date strings
+    const startDateStr = startDate || getLocalDateStr(start);
+    const endDateStr = endDate || getLocalDateStr(end);
+    const currentDate = new Date(startDateStr);
+    const stopDate = new Date(endDateStr);
 
     while (currentDate <= stopDate) {
       const dateStr = currentDate.toISOString().split("T")[0]; 
@@ -1504,9 +1488,9 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`; 
 
       
-      const dayOrders = orders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
-      const dayCancelled = cancelledOrders.filter(o => getOrderBusinessDate(o).toISOString().split("T")[0] === dateStr);
-      const dayExpenses = expenses.filter(e => e.expenseDate && new Date(e.expenseDate).toISOString().split("T")[0] === dateStr);
+      const dayOrders = orders.filter(o => getLocalDateStr(getOrderBusinessDate(o)) === dateStr);
+      const dayCancelled = cancelledOrders.filter(o => getLocalDateStr(getOrderBusinessDate(o)) === dateStr);
+      const dayExpenses = expenses.filter(e => e.expenseDate && getLocalDateStr(new Date(e.expenseDate)) === dateStr);
       const dayDeposit = deposits.find(d => d.date === dateStr) || { cashAmount: 0, cardAmount: 0, accountPayAmount: 0 };
 
       
