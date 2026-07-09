@@ -7,7 +7,7 @@ const logger = require("../../../shared/utils/logger");
 const { getLocalDateStr, getLocalStartOfDay, getLocalEndOfDay, getLocalHour, getLocalDayName } = require("../../../shared/utils/timezone");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY || "sk_test_mock");
 const Payment = require("../../payment/models/payment.model");
-const { triggerNewOrder } = require("../../../config/pusher");
+const { triggerNewOrder, triggerOrderUpdated } = require("../../../config/pusher");
 
 const round2 = (num) => {
   if (typeof num !== "number" || isNaN(num)) return 0;
@@ -232,6 +232,11 @@ exports.updateOrderStatus = async (id, status, note = "") => {
     order.status = status;
     order.statusHistory.push({ status, changedAt: new Date(), note });
     await order.save();
+
+    // Trigger real-time notification via Pusher
+    triggerOrderUpdated(order).catch((err) => {
+      logger.error(`Error triggering real-time update Pusher event: ${err.message}`);
+    });
 
     logger.info(`Order ${order.orderNumber} status → ${status}`);
     return order;
