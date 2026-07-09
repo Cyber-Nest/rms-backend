@@ -54,6 +54,30 @@ const triggerNewOrder = async (order) => {
   }
 };
 
+const triggerOrderUpdated = async (order) => {
+  if (!pusherInstance) {
+    logger.debug("Pusher is not initialized, skipping trigger.");
+    return;
+  }
+
+  try {
+    await pusherInstance.trigger("orders", "order-updated", {
+      _id: order._id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      orderSource: order.orderSource,
+      orderType: order.orderType,
+      orderTiming: order.orderTiming,
+      scheduledAt: order.scheduledAt,
+      createdAt: order.createdAt,
+    });
+    logger.info(`Pusher 'order-updated' event triggered for: ${order.orderNumber}`);
+  } catch (error) {
+    logger.error(`Failed to trigger Pusher event: ${error.message}`);
+  }
+};
+
 module.exports = {
   triggerNewOrder,
+  triggerOrderUpdated,
 };
