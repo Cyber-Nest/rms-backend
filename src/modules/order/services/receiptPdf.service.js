@@ -130,8 +130,14 @@ exports.generateReceiptPdf = (order, res) => {
     let typeStr = order.orderType
       ? order.orderType.replace("-", " ").toUpperCase()
       : "TAKEOUT";
-    if (order.orderSource === "online") {
-      typeStr = `ONLINE ${typeStr}`;
+    const platformPrefixMap = {
+      doordash: "DOORDASH",
+      skip: "SKIP",
+      ubereats: "UBER EATS",
+      online: "ONLINE",
+    };
+    if (platformPrefixMap[order.orderSource]) {
+      typeStr = `${platformPrefixMap[order.orderSource]} ${typeStr}`;
     }
     doc
       .font("Helvetica-Bold")
@@ -285,6 +291,7 @@ exports.generateReceiptPdf = (order, res) => {
     doc.moveDown(0.4);
 
     // Check payment history or payment method
+    let isAccountPay = ["doordash", "skip", "ubereats"].includes(order.orderSource);
     let isCardPayment = false;
     let cardInfo = {
       acct: "CARD",
@@ -295,7 +302,7 @@ exports.generateReceiptPdf = (order, res) => {
     };
     let cashInfo = { cashGiven: total, changeGiven: 0 };
 
-    if (order.orderSource === "online" || order.paymentMethod === "stripe") {
+    if (!isAccountPay && (order.orderSource === "online" || order.paymentMethod === "stripe")) {
       isCardPayment = true;
       cardInfo.acct = "STRIPE CARD";
       cardInfo.aid = "ONLINE_STRIPE";
@@ -308,7 +315,7 @@ exports.generateReceiptPdf = (order, res) => {
     ) {
       const p = order.payments[0];
       if (
-        ["card", "interac", "debit", "credit"].includes(p.method?.toLowerCase())
+        !isAccountPay && ["card", "interac", "debit", "credit"].includes(p.method?.toLowerCase())
       ) {
         isCardPayment = true;
         cardInfo.acct = p.cardBrand ? p.cardBrand.toUpperCase() : (order.orderSource === "online" ? "STRIPE CARD" : "INTERAC");
@@ -322,6 +329,7 @@ exports.generateReceiptPdf = (order, res) => {
         cashInfo.changeGiven = p.changeGiven || 0;
       }
     } else if (
+      !isAccountPay &&
       order.paymentType &&
       ["card", "interac", "debit", "credit"].includes(
         order.paymentType.toLowerCase(),
@@ -340,7 +348,20 @@ exports.generateReceiptPdf = (order, res) => {
     doc.moveDown(0.3);
     doc.font("Helvetica").fontSize(8);
 
-    if (isCardPayment) {
+    if (isAccountPay) {
+      rowY = doc.y;
+      doc.text("TYPE :", startX, rowY);
+      doc
+        .font("Helvetica-Bold")
+        .text("ACCOUNT PAY", startX + 80, rowY, { width: 126, align: "right" });
+      doc.font("Helvetica").moveDown(0.2);
+      rowY = doc.y;
+      doc.text("PLATFORM :", startX, rowY);
+      doc
+        .font("Helvetica-Bold")
+        .text(order.orderSource === "online" ? "WEBSITE" : order.orderSource.toUpperCase(), startX + 80, rowY, { width: 126, align: "right" });
+      doc.font("Helvetica").moveDown(0.2);
+    } else if (isCardPayment) {
       rowY = doc.y;
       doc.text("ACCT :", startX, rowY);
       doc

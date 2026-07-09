@@ -446,6 +446,9 @@ exports.getSalesSummary = async (filters = {}) => {
     
     let onlineTotal = 0;
     let posTotal = 0;
+    let doordashTotal = 0;
+    let skipTotal = 0;
+    let ubereatsTotal = 0;
 
     
     let cashTotal = 0;
@@ -481,16 +484,19 @@ exports.getSalesSummary = async (filters = {}) => {
 
         
         if (order.orderSource === "online") onlineTotal += order.total;
+        else if (order.orderSource === "doordash") doordashTotal += order.total;
+        else if (order.orderSource === "skip") skipTotal += order.total;
+        else if (order.orderSource === "ubereats") ubereatsTotal += order.total;
         else posTotal += order.total;
 
         
         if (order.paymentStatus === "paid") {
           if (order.payments && order.payments.length > 0) {
             for (const p of order.payments) {
-              if (p.method === "cash") {
-                cashTotal += p.amount;
-              } else if (order.orderSource === "online" || p.method === "stripe") {
+              if (["online", "doordash", "skip", "ubereats"].includes(order.orderSource) || p.method === "stripe") {
                 accountPayTotal += p.amount;
+              } else if (p.method === "cash") {
+                cashTotal += p.amount;
               } else {
                 cardTotal += p.amount;
                 
@@ -506,7 +512,7 @@ exports.getSalesSummary = async (filters = {}) => {
             }
           } else {
             
-            if (order.orderSource === "online" || order.paymentMethod === "stripe") {
+            if (["online", "doordash", "skip", "ubereats"].includes(order.orderSource) || order.paymentMethod === "stripe") {
               accountPayTotal += order.total;
             } else {
               cashTotal += order.total;
@@ -656,6 +662,9 @@ exports.getSalesSummary = async (filters = {}) => {
       },
       channelSummary: {
         online: round2(onlineTotal),
+        doordash: round2(doordashTotal),
+        skip: round2(skipTotal),
+        ubereats: round2(ubereatsTotal),
         pos: round2(adjustedPosTotal),
       },
       expense: rawExpenses.map((e) => ({
@@ -1049,6 +1058,33 @@ exports.getReportsSummary = async () => {
                       0
                     ]
                   }
+                },
+                doordashTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "doordash"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
+                skipTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "skip"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
+                },
+                ubereatsTotal: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "ubereats"] }] },
+                      "$total",
+                      0
+                    ]
+                  }
                 }
               }
             }
@@ -1114,7 +1150,10 @@ exports.getReportsSummary = async () => {
       dineInTotal: 0,
       driveThroughTotal: 0,
       onlineTotal: 0,
-      posTotal: 0
+      posTotal: 0,
+      doordashTotal: 0,
+      skipTotal: 0,
+      ubereatsTotal: 0
     };
 
     
@@ -1150,7 +1189,7 @@ exports.getReportsSummary = async () => {
         const funding = p._id?.funding?.toLowerCase() || "";
         const orderSource = p._id?.orderSource;
 
-        if (orderSource === "online" || method === "stripe") {
+        if (["online", "doordash", "skip", "ubereats"].includes(orderSource) || method === "stripe") {
           accountPayTotal += p.amount;
         } else if (method === "cash") {
           cashTotal += p.amount;
@@ -1249,6 +1288,9 @@ exports.getReportsSummary = async () => {
       },
       channelSummary: {
         online: round2(totals.onlineTotal),
+        doordash: round2(totals.doordashTotal),
+        skip: round2(totals.skipTotal),
+        ubereats: round2(totals.ubereatsTotal),
         pos: round2(adjustedPosTotal)
       },
       expense: rawExpenses

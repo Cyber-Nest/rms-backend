@@ -76,7 +76,7 @@ const orderSchema = new mongoose.Schema(
     },
     orderSource: {
       type: String,
-      enum: ["pos", "online"],
+      enum: ["pos", "online", "doordash", "skip", "ubereats"],
       default: "pos",
     },
 
