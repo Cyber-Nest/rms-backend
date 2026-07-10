@@ -136,7 +136,7 @@ exports.getAllProducts = async () => {
 exports.getBranchProductsList = async () => {
   try {
     return await Product.find()
-      .select('_id name price image itemType categoryId productId isActive')
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel')
       .populate('categoryId', 'name')
       .sort({ name: 1 });
   } catch (error) {
@@ -152,7 +152,7 @@ exports.toggleProductActive = async (id, isActive) => {
       { isActive },
       { returnDocument: 'after', runValidators: true }
     )
-      .select('_id name price image itemType categoryId productId isActive')
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel')
       .populate('categoryId', 'name');
     
     if (!product) {
@@ -228,7 +228,8 @@ exports.getPOSMenuFeed = async () => {
     }
 
     const categories = await Category.find({ isActive: true }).sort({ displayOrder: 1 });
-    const products = await Product.find({ isActive: true })
+    const activeCategoryIds = categories.map(cat => cat._id);
+    const products = await Product.find({ isActive: true, categoryId: { $in: activeCategoryIds } })
       .populate({
         path: 'modifierGroups',
         populate: {
@@ -254,6 +255,7 @@ exports.getPOSMenuFeed = async () => {
         price: prod.price,
         badge: prod.badge,
         isPopular: prod.isPopular,
+        kitchenLabel: prod.kitchenLabel || 'chicken',
         itemType: prod.itemType,
         modifierGroups: prod.modifierGroups.map(g => ({
           id: g._id.toHexString(),

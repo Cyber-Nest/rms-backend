@@ -24,6 +24,7 @@ const orderItemSchema = new mongoose.Schema(
     quantity: { type: Number, required: true, min: 1 },
     totalPrice: { type: Number, required: true },
     note: { type: String, default: "" },
+    kitchenLabel: { type: String, enum: ['chicken', 'pizza'], default: 'chicken' },
   },
   { _id: false },
 );
