@@ -135,6 +135,10 @@ const orderSchema = new mongoose.Schema(
       enum: ["pending", "preparing", "ready", "completed", "cancelled"],
       default: "pending",
     },
+    receptionCompleted: {
+      type: Boolean,
+      default: false,
+    },
     statusHistory: [
       {
         status: String,

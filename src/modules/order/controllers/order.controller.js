@@ -145,9 +145,9 @@ exports.downloadReceiptPdf = async (req, res) => {
 
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const { status, note } = req.body;
+    const { status, note, receptionCompleted } = req.body;
     if (!status) return res.status(400).json({ success: false, message: 'Status is required.' });
-    const order = await orderService.updateOrderStatus(req.params.id, status, note);
+    const order = await orderService.updateOrderStatus(req.params.id, status, note, receptionCompleted);
     res.status(200).json({ success: true, data: order });
   } catch (error) {
     handleError(res, error, 400);
