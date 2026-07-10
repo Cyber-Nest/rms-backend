@@ -32,8 +32,17 @@ exports.createOrder = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, orderType, paymentStatus, date, startDate, endDate } = req.query;
-    const orders = await orderService.getAllOrders({ status, orderType, paymentStatus, date, startDate, endDate });
+    const { status, orderType, paymentStatus, date, startDate, endDate, fields, excludeReceptionCompleted } = req.query;
+    const orders = await orderService.getAllOrders({
+      status,
+      orderType,
+      paymentStatus,
+      date,
+      startDate,
+      endDate,
+      fields,
+      excludeReceptionCompleted: excludeReceptionCompleted === 'true'
+    });
     res.status(200).json({ success: true, data: orders });
   } catch (error) {
     handleError(res, error, 500);
@@ -148,7 +157,14 @@ exports.updateOrderStatus = async (req, res) => {
     const { status, note, receptionCompleted } = req.body;
     if (!status) return res.status(400).json({ success: false, message: 'Status is required.' });
     const order = await orderService.updateOrderStatus(req.params.id, status, note, receptionCompleted);
-    res.status(200).json({ success: true, data: order });
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: order._id,
+        status: order.status,
+        receptionCompleted: order.receptionCompleted
+      }
+    });
   } catch (error) {
     handleError(res, error, 400);
   }

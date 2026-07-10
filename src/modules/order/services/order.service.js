@@ -156,9 +156,22 @@ exports.getAllOrders = async (filters = {}) => {
 
     if (filters.status) {
       if (typeof filters.status === 'string' && filters.status.includes(',')) {
-        query.status = { $in: filters.status.split(',') };
+        const statuses = filters.status.split(',');
+        if (filters.excludeReceptionCompleted && statuses.includes('completed')) {
+          query.$or = [
+            { status: { $in: statuses.filter(s => s !== 'completed') } },
+            { status: 'completed', receptionCompleted: { $ne: true } }
+          ];
+        } else {
+          query.status = { $in: statuses };
+        }
       } else {
-        query.status = filters.status;
+        if (filters.excludeReceptionCompleted && filters.status === 'completed') {
+          query.status = 'completed';
+          query.receptionCompleted = { $ne: true };
+        } else {
+          query.status = filters.status;
+        }
       }
     }
     if (filters.orderType) query.orderType = filters.orderType;
@@ -182,10 +195,13 @@ exports.getAllOrders = async (filters = {}) => {
     const dateFilter = buildDateFilter(start, end);
     Object.assign(query, dateFilter);
 
+    let selectFields = "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt receptionCompleted";
+    if (filters.fields) {
+      selectFields = filters.fields.split(',').join(' ');
+    }
+
     const orders = await Order.find(query)
-      .select(
-        "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt receptionCompleted",
-      )
+      .select(selectFields)
       .sort({ createdAt: -1 })
       .lean();
 
