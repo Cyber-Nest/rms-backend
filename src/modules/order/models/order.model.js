@@ -24,6 +24,7 @@ const orderItemSchema = new mongoose.Schema(
     quantity: { type: Number, required: true, min: 1 },
     totalPrice: { type: Number, required: true },
     note: { type: String, default: "" },
+    kitchenLabel: { type: String, enum: ['chicken', 'pizza'], default: 'chicken' },
   },
   { _id: false },
 );
@@ -134,6 +135,10 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: ["pending", "preparing", "ready", "completed", "cancelled"],
       default: "pending",
+    },
+    receptionCompleted: {
+      type: Boolean,
+      default: false,
     },
     statusHistory: [
       {

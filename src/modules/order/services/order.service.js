@@ -156,9 +156,22 @@ exports.getAllOrders = async (filters = {}) => {
 
     if (filters.status) {
       if (typeof filters.status === 'string' && filters.status.includes(',')) {
-        query.status = { $in: filters.status.split(',') };
+        const statuses = filters.status.split(',');
+        if (filters.excludeReceptionCompleted && statuses.includes('completed')) {
+          query.$or = [
+            { status: { $in: statuses.filter(s => s !== 'completed') } },
+            { status: 'completed', receptionCompleted: { $ne: true } }
+          ];
+        } else {
+          query.status = { $in: statuses };
+        }
       } else {
-        query.status = filters.status;
+        if (filters.excludeReceptionCompleted && filters.status === 'completed') {
+          query.status = 'completed';
+          query.receptionCompleted = { $ne: true };
+        } else {
+          query.status = filters.status;
+        }
       }
     }
     if (filters.orderType) query.orderType = filters.orderType;
@@ -182,10 +195,13 @@ exports.getAllOrders = async (filters = {}) => {
     const dateFilter = buildDateFilter(start, end);
     Object.assign(query, dateFilter);
 
+    let selectFields = "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt receptionCompleted";
+    if (filters.fields) {
+      selectFields = filters.fields.split(',').join(' ');
+    }
+
     const orders = await Order.find(query)
-      .select(
-        "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt",
-      )
+      .select(selectFields)
       .sort({ createdAt: -1 })
       .lean();
 
@@ -209,7 +225,7 @@ exports.getOrderById = async (id) => {
 };
 
 // ── Update Order Status ───────────────────────────────────────
-exports.updateOrderStatus = async (id, status, note = "") => {
+exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = undefined) => {
   try {
     const validTransitions = {
       pending: ["preparing", "cancelled"],
@@ -222,6 +238,25 @@ exports.updateOrderStatus = async (id, status, note = "") => {
     const order = await Order.findById(id);
     if (!order) throw new Error("Order not found.");
 
+    // Handle updates when status is already matching
+    if (order.status === status) {
+      if (receptionCompleted !== undefined) {
+        order.receptionCompleted = receptionCompleted;
+      }
+      if (note) {
+        order.statusHistory.push({ status, changedAt: new Date(), note });
+      }
+      await order.save();
+
+      // Trigger real-time notification via Pusher
+      triggerOrderUpdated(order).catch((err) => {
+        logger.error(`Error triggering real-time update Pusher event: ${err.message}`);
+      });
+
+      logger.info(`Order ${order.orderNumber} updated (status remained ${status}, receptionCompleted set to ${receptionCompleted})`);
+      return order;
+    }
+
     const allowed = validTransitions[order.status] || [];
     if (!allowed.includes(status)) {
       throw new Error(
@@ -230,6 +265,9 @@ exports.updateOrderStatus = async (id, status, note = "") => {
     }
 
     order.status = status;
+    if (receptionCompleted !== undefined) {
+      order.receptionCompleted = receptionCompleted;
+    }
     order.statusHistory.push({ status, changedAt: new Date(), note });
     await order.save();
 
@@ -238,7 +276,7 @@ exports.updateOrderStatus = async (id, status, note = "") => {
       logger.error(`Error triggering real-time update Pusher event: ${err.message}`);
     });
 
-    logger.info(`Order ${order.orderNumber} status → ${status}`);
+    logger.info(`Order ${order.orderNumber} status → ${status} (receptionCompleted: ${receptionCompleted})`);
     return order;
   } catch (error) {
     logger.error(`Order Service Error: updateOrderStatus - ${error.message}`);

@@ -47,6 +47,11 @@ const productSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  kitchenLabel: {
+    type: String,
+    enum: ['chicken', 'pizza'],
+    default: 'chicken',
+  },
   productId: {
     type: String,
     unique: true,
