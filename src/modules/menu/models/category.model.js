@@ -32,4 +32,6 @@ const categorySchema = new mongoose.Schema({
   timestamps: true
 });
 
+categorySchema.index({ isActive: 1, displayOrder: 1 });
+
 module.exports = mongoose.model('Category', categorySchema);

@@ -3,10 +3,17 @@ const ModifierGroup = require('../models/modifier.model');
 const Product = require('../models/product.model');
 const cloudinary = require('../../../config/cloudinary.config');
 const logger = require('../../../shared/utils/logger');
+// Dynamic import to prevent circular dependency
+const getOrderService = () => require('../../order/services/order.service');
 
 let cachedPOSMenuFeed = null;
 const clearPOSMenuCache = () => {
   cachedPOSMenuFeed = null;
+  try {
+    getOrderService().clearProductLookupCache();
+  } catch (err) {
+    logger.warn(`Could not clear product lookup cache: ${err.message}`);
+  }
 };
 
 
@@ -102,7 +109,7 @@ exports.updateModifierGroup = async (id, groupData) => {
 
 exports.deleteModifierGroup = async (id) => {
   try {
-    const group = await ModifierGroup.deleteModifierGroup || await ModifierGroup.findByIdAndDelete(id);
+    const group = await ModifierGroup.findByIdAndDelete(id);
     if (!group) {
       throw new Error('Modifier group not found.');
     }

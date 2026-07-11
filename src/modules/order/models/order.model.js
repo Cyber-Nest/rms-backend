@@ -216,4 +216,10 @@ orderSchema.index({ scheduledAt: 1 }, { sparse: true });
 orderSchema.index({ "customer.phone": 1 }, { sparse: true });
 orderSchema.index({ "customer.email": 1 }, { sparse: true });
 
+orderSchema.index({ orderTiming: 1, createdAt: -1 });
+orderSchema.index({ orderTiming: 1, scheduledAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ paymentStatus: 1 });
+orderSchema.index({ receptionCompleted: 1, status: 1 });
+
 module.exports = mongoose.model("Order", orderSchema);

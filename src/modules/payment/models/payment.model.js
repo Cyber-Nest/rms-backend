@@ -26,4 +26,10 @@ const paymentSchema = new mongoose.Schema(
   }
 );
 
+// Indexes for fast lookups
+paymentSchema.index({ orderId: 1 });
+paymentSchema.index({ createdAt: -1 });
+paymentSchema.index({ status: 1 });
+paymentSchema.index({ orderNumber: 1 });
+
 module.exports = mongoose.model("Payment", paymentSchema);

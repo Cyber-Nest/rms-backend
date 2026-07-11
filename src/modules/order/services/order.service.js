@@ -5,7 +5,9 @@ const Expense = require("../../expense/models/expense.model");
 const Deposit = require("../models/deposit.model");
 const logger = require("../../../shared/utils/logger");
 const { getLocalDateStr, getLocalStartOfDay, getLocalEndOfDay, getLocalHour, getLocalDayName } = require("../../../shared/utils/timezone");
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY || "sk_test_mock");
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? require("stripe")(process.env.STRIPE_SECRET_KEY)
+  : null;
 const Payment = require("../../payment/models/payment.model");
 const { triggerNewOrder, triggerOrderUpdated } = require("../../../config/pusher");
 
@@ -40,6 +42,49 @@ const buildDateFilter = (start, end) => {
   return {};
 };
 
+let productLookupCache = null;
+let lastCacheTime = 0;
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+const getProductLookups = async () => {
+  const now = Date.now();
+  if (productLookupCache && (now - lastCacheTime < CACHE_DURATION_MS)) {
+    return productLookupCache;
+  }
+
+  const categoryMap = {};
+  const idMap = {};
+  try {
+    const products = await Product.find()
+      .select("_id categoryId productId")
+      .populate({ path: "categoryId", select: "name" })
+      .lean();
+    
+    for (const p of products) {
+      const prodId = p._id ? p._id.toString() : "";
+      const catName =
+        p.categoryId && typeof p.categoryId === "object"
+          ? p.categoryId.name
+          : "Other";
+      if (prodId) {
+        categoryMap[prodId] = catName;
+        idMap[prodId] = p.productId || "";
+      }
+    }
+    productLookupCache = { categoryMap, idMap };
+    lastCacheTime = now;
+  } catch (err) {
+    logger.warn(`Could not build product lookup maps: ${err.message}`);
+    if (!productLookupCache) productLookupCache = { categoryMap: {}, idMap: {} };
+  }
+  return productLookupCache;
+};
+
+exports.clearProductLookupCache = () => {
+  productLookupCache = null;
+  lastCacheTime = 0;
+};
+
 const getOrderBusinessDate = (order) => {
   return order.orderTiming === "later" && order.scheduledAt
     ? new Date(order.scheduledAt)
@@ -61,6 +106,7 @@ exports.createOrder = async (orderData) => {
     let paymentIntent = null;
 
     if (orderData.paymentMethod === "stripe" && orderData.paymentIntentId) {
+      if (!stripe) throw new Error("Stripe is not configured. STRIPE_SECRET_KEY is missing.");
       // Query Stripe
       paymentIntent = await stripe.paymentIntents.retrieve(orderData.paymentIntentId, {
         expand: ["payment_method"]
@@ -195,17 +241,65 @@ exports.getAllOrders = async (filters = {}) => {
     const dateFilter = buildDateFilter(start, end);
     Object.assign(query, dateFilter);
 
+    // Server-side search filter
+    if (filters.search) {
+      const searchRegex = new RegExp(filters.search.trim(), 'i');
+      const searchOr = [
+        { orderNumber: searchRegex },
+        { "customer.name": searchRegex },
+        { "customer.phone": searchRegex }
+      ];
+      if (query.$or) {
+        query.$and = [
+          { $or: query.$or },
+          { $or: searchOr }
+        ];
+        delete query.$or;
+      } else {
+        query.$or = searchOr;
+      }
+    }
+
     let selectFields = "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt receptionCompleted";
     if (filters.fields) {
       selectFields = filters.fields.split(',').join(' ');
     }
 
-    const orders = await Order.find(query)
-      .select(selectFields)
-      .sort({ createdAt: -1 })
-      .lean();
+    const isPaginated = filters.page !== undefined || filters.limit !== undefined;
 
-    return orders;
+    if (isPaginated) {
+      const page = Math.max(1, parseInt(filters.page) || 1);
+      const limit = Math.min(500, Math.max(1, parseInt(filters.limit) || 50));
+      const skip = (page - 1) * limit;
+
+      const [orders, total] = await Promise.all([
+        Order.find(query)
+          .select(selectFields)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Order.countDocuments(query)
+      ]);
+
+      return {
+        orders,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    } else {
+      // Non-paginated 
+      const orders = await Order.find(query)
+        .select(selectFields)
+        .sort({ createdAt: -1 })
+        .limit(300)
+        .lean();
+      return orders;
+    }
   } catch (error) {
     logger.error(`Order Service Error: getAllOrders - ${error.message}`);
     throw error;
@@ -293,19 +387,17 @@ exports.markOrderPaid = async (id, payments) => {
     if (payments && payments.length > 0) {
       order.payments = [...(order.payments || []), ...payments];
 
-      // Save Payment documents in DB
-      for (const p of payments) {
-        const paymentDoc = new Payment({
-          orderId: order._id,
-          orderNumber: order.orderNumber,
-          amount: p.amount,
-          paymentMethod: p.method === "cash" ? "cash" : "card",
-          status: "succeeded",
-          cashGiven: p.cashGiven || 0,
-          changeGiven: p.changeGiven || 0
-        });
-        await paymentDoc.save();
-      }
+      // Batch insert Payment audit documents in DB 
+      const paymentDocs = payments.map(p => ({
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        amount: p.amount,
+        paymentMethod: p.method === "cash" ? "cash" : "card",
+        status: "succeeded",
+        cashGiven: p.cashGiven || 0,
+        changeGiven: p.changeGiven || 0
+      }));
+      await Payment.insertMany(paymentDocs);
     }
 
     const paymentsTotal = order.payments
@@ -333,15 +425,21 @@ exports.markOrderPaid = async (id, payments) => {
 // ── Cancel Order ──────────────────────────────────────────────
 exports.cancelOrder = async (id) => {
   try {
-    const order = await Order.findById(id);
-    if (!order) throw new Error("Order not found.");
-    if (["completed", "cancelled"].includes(order.status)) {
-      throw new Error(`Order is already ${order.status}.`);
+    // Atomic update
+    const order = await Order.findOneAndUpdate(
+      { _id: id, status: { $nin: ["completed", "cancelled"] } },
+      {
+        $set: { status: "cancelled" },
+        $push: { statusHistory: { status: "cancelled", changedAt: new Date() } }
+      },
+      { new: true }
+    );
+    if (!order) {
+      // Check if order exists to give specific error
+      const exists = await Order.findById(id).select("status").lean();
+      if (!exists) throw new Error("Order not found.");
+      throw new Error(`Order is already ${exists.status}.`);
     }
-
-    order.status = "cancelled";
-    order.statusHistory.push({ status: "cancelled", changedAt: new Date() });
-    await order.save();
 
     logger.info(`Order ${order.orderNumber} cancelled`);
     return order;
@@ -365,11 +463,12 @@ exports.getNextOrderNumber = async (orderType) => {
 // ── Update Order Due Time ─────────────────────────────────────
 exports.updateOrderDueTime = async (id, dueAt) => {
   try {
-    const order = await Order.findById(id);
+    const order = await Order.findByIdAndUpdate(
+      id,
+      { $set: { dueAt: new Date(dueAt) } },
+      { new: true }
+    );
     if (!order) throw new Error("Order not found.");
-
-    order.dueAt = new Date(dueAt);
-    await order.save();
 
     logger.info(`Order ${order.orderNumber} due time updated to ${dueAt}`);
     return order;
@@ -440,30 +539,11 @@ exports.getSalesSummary = async (filters = {}) => {
 
     // Retrieve only necessary fields via database query projection
     const orders = await Order.find(query)
-      .select("status total subtotal tax discount orderType orderSource paymentStatus payments items")
+      .select("status total subtotal tax discount orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod")
       .lean();
 
-    // Fetch products to build category lookup map with projection
-    const productCategoryMap = {};
-    try {
-      const products = await Product.find()
-        .select("_id categoryId")
-        .populate({ path: "categoryId", select: "name" })
-        .lean();
-      
-      for (const p of products) {
-        const prodId = p._id ? p._id.toString() : "";
-        const catName =
-          p.categoryId && typeof p.categoryId === "object"
-            ? p.categoryId.name
-            : "";
-        if (prodId && catName) {
-          productCategoryMap[prodId] = catName;
-        }
-      }
-    } catch (err) {
-      logger.warn(`Could not build product category lookup: ${err.message}`);
-    }
+    // Get cached product lookup maps
+    const { categoryMap: productCategoryMap } = await getProductLookups();
 
     // 1. Completed & Cancelled Orders
     let completedCount = 0;
@@ -763,6 +843,7 @@ exports.saveDeposit = async (depositData) => {
 exports.getDashboardMetrics = async (filters = {}) => {
   try {
     const targetDateStr = filters.date || getLocalDateStr();
+    const TIMEZONE = "America/Edmonton";
     
     // Use local timezone day boundaries
     const todayStart = getLocalStartOfDay(targetDateStr);
@@ -775,137 +856,120 @@ exports.getDashboardMetrics = async (filters = {}) => {
     const past30DateStr = past30Date.toISOString().slice(0, 10);
     const past30DaysStart = getLocalStartOfDay(past30DateStr);
 
-    
-    const dateQuery = buildDateFilter(past30DaysStart, todayEnd);
-    const orders30Days = await Order.find(dateQuery)
-    .select("createdAt status total customer.phone customer.email items.name items.quantity orderTiming scheduledAt dueAt")
-    .sort({ createdAt: 1 })
-    .lean();
+    const dateMatchFilter = buildDateFilter(past30DaysStart, todayEnd);
+    const todayDateFilter = buildDateFilter(todayStart, todayEnd);
 
-    const todayOrders = [];
-    const nonCancelled30Days = [];
-    
-    const phoneToEarliestDate = new Map();
-    const emailToEarliestDate = new Map();
+    // Single aggregation for today's metrics, popular days, and popular food
+    const [aggResult] = await Order.aggregate([
+      { $match: dateMatchFilter },
+      { $facet: {
+          // Today's orders: count + earnings
+          todayMetrics: [
+            { $match: todayDateFilter },
+            { $group: {
+                _id: null,
+                totalOrders: { $sum: 1 },
+                totalEarnings: { $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$total", 0] } }
+            }}
+          ],
+          // Popular days (30-day, non-cancelled)
+          popularDays: [
+            { $match: { status: { $ne: "cancelled" } } },
+            { $addFields: {
+                businessDate: { $cond: [
+                  { $eq: ["$orderTiming", "later"] },
+                  "$scheduledAt",
+                  "$createdAt"
+                ]}
+            }},
+            { $group: {
+                _id: { $dayOfWeek: { date: "$businessDate", timezone: TIMEZONE } },
+                count: { $sum: 1 }
+            }}
+          ],
+          // Popular food items (30-day, non-cancelled)
+          popularFood: [
+            { $match: { status: { $ne: "cancelled" } } },
+            { $unwind: "$items" },
+            { $group: { _id: "$items.name", value: { $sum: "$items.quantity" } } },
+            { $sort: { value: -1 } },
+            { $limit: 7 }
+          ],
+          // Customer tracking — minimal fields for new/returning detection
+          customerData: [
+            { $match: todayDateFilter },
+            { $project: {
+                phone: "$customer.phone",
+                email: "$customer.email",
+                orderTiming: 1, scheduledAt: 1, createdAt: 1
+            }}
+          ],
+          // All customer earliest dates (30 days) for new/returning logic
+          allCustomerDates: [
+            { $project: {
+                phone: "$customer.phone",
+                email: "$customer.email",
+                orderTiming: 1, scheduledAt: 1, createdAt: 1
+            }}
+          ]
+      }}
+    ]);
 
-    for (const order of orders30Days) {
-      const orderDate = getOrderBusinessDate(order);
-      
-      
-      const phone = order.customer?.phone?.trim();
-      const email = order.customer?.email?.trim();
-      if (phone && !phoneToEarliestDate.has(phone)) {
-        phoneToEarliestDate.set(phone, orderDate);
-      }
-      if (email && !emailToEarliestDate.has(email)) {
-        emailToEarliestDate.set(email, orderDate);
-      }
+    // Today metrics
+    const todayMetrics = aggResult?.todayMetrics?.[0] || { totalOrders: 0, totalEarnings: 0 };
 
-      if (orderDate >= todayStart && orderDate <= todayEnd) {
-        todayOrders.push(order);
-      }
-      if (order.status !== 'cancelled') {
-        nonCancelled30Days.push(order);
-      }
+    // Popular days 
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const popularDaysData = (aggResult?.popularDays || [])
+      .map(d => ({ name: dayNames[d._id - 1] || 'Unknown', value: d.count }))
+      .filter(d => d.value > 0);
+
+    // Popular food
+    let popularFoodData = aggResult?.popularFood || [];
+    if (popularFoodData.length > 6) {
+      const top6 = popularFoodData.slice(0, 6);
+      const otherVal = popularFoodData.slice(6).reduce((sum, item) => sum + item.value, 0);
+      popularFoodData = [...top6, { _id: 'Other Items', value: otherVal }];
     }
-
-    const totalOrders = todayOrders.length;
-    let totalEarnings = 0;
-    
-    for (const order of todayOrders) {
-      if (order.status !== 'cancelled') {
-        totalEarnings += order.total || 0;
-      }
-    }
-
-    
-    let newCustomers = 0;
-    let returningCustomers = 0;
-
-    for (const order of todayOrders) {
-      const orderDate = getOrderBusinessDate(order);
-      const phone = order.customer?.phone?.trim();
-      const email = order.customer?.email?.trim();
-      
-      if (phone || email) {
-        let hasPrev = false;
-        
-        if (phone && phoneToEarliestDate.has(phone)) {
-          const earliest = phoneToEarliestDate.get(phone);
-          if (new Date(earliest) < orderDate) {
-            hasPrev = true;
-          }
-        }
-        if (!hasPrev && email && emailToEarliestDate.has(email)) {
-          const earliest = emailToEarliestDate.get(email);
-          if (new Date(earliest) < orderDate) {
-            hasPrev = true;
-          }
-        }
-
-        if (hasPrev) {
-          returningCustomers += 1;
-        } else {
-          newCustomers += 1;
-        }
-      }
-    }
-
-    
-    const daysDataCounts = {
-      Monday: 0,
-      Tuesday: 0,
-      Wednesday: 0,
-      Thursday: 0,
-      Friday: 0,
-      Saturday: 0,
-      Sunday: 0
-    };
-
-    for (const order of nonCancelled30Days) {
-      const dayName = getLocalDayName(getOrderBusinessDate(order));
-      if (dayName in daysDataCounts) {
-        daysDataCounts[dayName] += 1;
-      }
-    }
-
-    const popularDaysData = Object.entries(daysDataCounts)
-      .map(([name, value]) => ({ name, value }))
-      .filter(item => item.value > 0);
-
-    
-    const foodDataCounts = {};
-    for (const order of nonCancelled30Days) {
-      if (order.items && Array.isArray(order.items)) {
-        for (const item of order.items) {
-          const itemName = item.name;
-          if (itemName) {
-            foodDataCounts[itemName] = (foodDataCounts[itemName] || 0) + (item.quantity || 1);
-          }
-        }
-      }
-    }
-
-    const sortedFood = Object.entries(foodDataCounts)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-
-    let popularFoodData = [];
-    if (sortedFood.length > 6) {
-      popularFoodData = sortedFood.slice(0, 6);
-      const otherVal = sortedFood.slice(6).reduce((sum, item) => sum + item.value, 0);
-      popularFoodData.push({ name: 'Other Items', value: otherVal });
-    } else {
-      popularFoodData = sortedFood;
-    }
-
+    popularFoodData = popularFoodData.map(f => ({ name: f._id || f.name || 'Unknown', value: f.value }));
     if (popularFoodData.length === 0) {
       popularFoodData = [{ name: 'No Menu Items Sold', value: 0 }];
     }
 
+    // New vs returning customers (lightweight JS — only today's orders)
+    let newCustomers = 0;
+    let returningCustomers = 0;
+    const phoneToEarliestDate = new Map();
+    const emailToEarliestDate = new Map();
+
+    for (const order of (aggResult?.allCustomerDates || [])) {
+      const orderDate = getOrderBusinessDate(order);
+      const phone = order.phone?.trim();
+      const email = order.email?.trim();
+      if (phone && !phoneToEarliestDate.has(phone)) phoneToEarliestDate.set(phone, orderDate);
+      if (email && !emailToEarliestDate.has(email)) emailToEarliestDate.set(email, orderDate);
+    }
+
+    for (const order of (aggResult?.customerData || [])) {
+      const orderDate = getOrderBusinessDate(order);
+      const phone = order.phone?.trim();
+      const email = order.email?.trim();
+      if (phone || email) {
+        let hasPrev = false;
+        if (phone && phoneToEarliestDate.has(phone)) {
+          if (new Date(phoneToEarliestDate.get(phone)) < orderDate) hasPrev = true;
+        }
+        if (!hasPrev && email && emailToEarliestDate.has(email)) {
+          if (new Date(emailToEarliestDate.get(email)) < orderDate) hasPrev = true;
+        }
+        if (hasPrev) returningCustomers += 1;
+        else newCustomers += 1;
+      }
+    }
+
     return {
-      totalOrders,
-      totalEarnings: round2(totalEarnings),
+      totalOrders: todayMetrics.totalOrders,
+      totalEarnings: round2(todayMetrics.totalEarnings),
       newCustomers,
       returningCustomers,
       popularDaysData,
@@ -995,35 +1059,30 @@ exports.getUniqueCustomers = async (filters = {}) => {
 };
 
 
-exports.getReportsSummary = async () => {
+exports.getReportsSummary = async (filters = {}) => {
   try {
-    
-    const productCategoryMap = {};
-    try {
-      const products = await Product.find()
-        .select("_id categoryId")
-        .populate({ path: "categoryId", select: "name" })
-        .lean();
-      
-      for (const p of products) {
-        const prodId = p._id ? p._id.toString() : "";
-        const catName =
-          p.categoryId && typeof p.categoryId === "object"
-            ? p.categoryId.name
-            : "";
-        if (prodId && catName) {
-          productCategoryMap[prodId] = catName;
-        }
+    let start = null;
+    let end = null;
+    if (filters.startDate || filters.endDate) {
+      if (filters.startDate) {
+        start = getLocalStartOfDay(filters.startDate);
       }
-    } catch (err) {
-      logger.warn(`Could not build product category lookup for reports: ${err.message}`);
+      if (filters.endDate) {
+        end = getLocalEndOfDay(filters.endDate);
+      }
     }
-
+    const dateFilter = buildDateFilter(start, end);
     
-    const [summaryResult] = await Order.aggregate([
-      {
-        $facet: {
-          totals: [
+    // Get cached product lookup maps
+    const { categoryMap: productCategoryMap } = await getProductLookups();
+
+    const pipeline = [];
+    if (Object.keys(dateFilter).length > 0) {
+      pipeline.push({ $match: dateFilter });
+    }
+    pipeline.push({
+      $facet: {
+        totals: [
             {
               $group: {
                 _id: null,
@@ -1178,8 +1237,8 @@ exports.getReportsSummary = async () => {
             }
           ]
         }
-      }
-    ]);
+      });
+    const [summaryResult] = await Order.aggregate(pipeline);
 
     const totals = summaryResult?.totals?.[0] || {
       completedCount: 0,
@@ -1248,11 +1307,18 @@ exports.getReportsSummary = async () => {
       }
     }
 
-    
     let totalCashExpense = 0;
     const rawExpenses = [];
     try {
-      const expensesList = await Expense.find()
+      const expQuery = {};
+      if (start && end) {
+        expQuery.expenseDate = { $gte: start, $lte: end };
+      } else if (start) {
+        expQuery.expenseDate = { $gte: start };
+      } else if (end) {
+        expQuery.expenseDate = { $lte: end };
+      }
+      const expensesList = await Expense.find(expQuery)
         .select("paymentMode amount expenseType employeeName pst gst hst")
         .lean();
 
@@ -1348,28 +1414,8 @@ exports.getReportsSummary = async () => {
 exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
   try {
     
-    const productCategoryMap = {};
-    const productIDMap = {};
-    try {
-      const products = await Product.find()
-        .select("_id categoryId productId")
-        .populate({ path: "categoryId", select: "name" })
-        .lean();
-      
-      for (const p of products) {
-        const prodId = p._id ? p._id.toString() : "";
-        const catName =
-          p.categoryId && typeof p.categoryId === "object"
-            ? p.categoryId.name
-            : "Other";
-        if (prodId) {
-          productCategoryMap[prodId] = catName;
-          productIDMap[prodId] = p.productId || "";
-        }
-      }
-    } catch (err) {
-      logger.warn(`Could not build product category lookup for item sales: ${err.message}`);
-    }
+    // Get cached product lookup maps
+    const { categoryMap: productCategoryMap, idMap: productIDMap } = await getProductLookups();
 
     
     const matchQuery = { status: { $ne: "cancelled" } };
@@ -1466,6 +1512,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
 // Get Hourly Sales Summary Report  ───────
 exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
   try {
+    const TIMEZONE = "America/Edmonton";
     const matchQuery = { status: { $ne: "cancelled" } };
     let start, end;
     if (startDate && endDate) {
@@ -1479,10 +1526,29 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
     const dateFilter = buildDateFilter(start, end);
     Object.assign(matchQuery, dateFilter);
 
-    // Fetch matching orders
-    const orders = await Order.find(matchQuery).select("total createdAt orderTiming scheduledAt").lean();
+    // Aggregation: group by hour in local timezone
+    const hourlyData = await Order.aggregate([
+      { $match: matchQuery },
+      { $addFields: {
+          businessHour: { $hour: {
+            date: { $cond: [{ $eq: ["$orderTiming", "later"] }, "$scheduledAt", "$createdAt"] },
+            timezone: TIMEZONE
+          }}
+      }},
+      { $group: {
+          _id: "$businessHour",
+          orderCount: { $sum: 1 },
+          totalSales: { $sum: "$total" }
+      }}
+    ]);
 
-    // Define hourly durations matching restaurant active hours (10 AM to 10 PM)
+    // Build hour lookup map from aggregation results
+    const hourMap = new Map();
+    for (const row of hourlyData) {
+      hourMap.set(row._id, { orderCount: row.orderCount, totalSales: row.totalSales });
+    }
+
+    // Define hourly slots matching restaurant active hours (10 AM to 10 PM)
     const hourlySlots = [
       { label: "10 AM to 11 AM", startHour: 10, endHour: 11, orderCount: 0, totalSales: 0 },
       { label: "11 AM to 12 PM", startHour: 11, endHour: 12, orderCount: 0, totalSales: 0 },
@@ -1498,19 +1564,13 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
       { label: "9 PM to 10 PM", startHour: 21, endHour: 22, orderCount: 0, totalSales: 0 }
     ];
 
-    for (const order of orders) {
-      const date = getOrderBusinessDate(order);
-      const hour = getLocalHour(date);
-
-      const slot = hourlySlots.find(s => hour >= s.startHour && hour < s.endHour);
-      if (slot) {
-        slot.orderCount++;
-        slot.totalSales += order.total;
-      }
-    }
-
+    // Map aggregation results to slots
     for (const slot of hourlySlots) {
-      slot.totalSales = round2(slot.totalSales);
+      const data = hourMap.get(slot.startHour);
+      if (data) {
+        slot.orderCount = data.orderCount;
+        slot.totalSales = round2(data.totalSales);
+      }
     }
 
     return hourlySlots;
@@ -1523,6 +1583,7 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
 // ── Get Monthly Sales Summary Report ───────
 exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
   try {
+    const TIMEZONE = "America/Edmonton";
     let start, end;
     if (startDate && endDate) {
       start = getLocalStartOfDay(startDate);
@@ -1536,170 +1597,184 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       end = getLocalEndOfDay(todayStr);
     }
 
-    // Fetch all active orders (not cancelled)
-    const ordersQuery = { status: { $ne: "cancelled" } };
-    Object.assign(ordersQuery, buildDateFilter(start, end));
-    const orders = await Order.find(ordersQuery).lean();
+    const dateFilter = buildDateFilter(start, end);
 
-    // Fetch cancelled orders to calculate paid/unpaid cancelled counts
-    const cancelledQuery = { status: "cancelled" };
-    Object.assign(cancelledQuery, buildDateFilter(start, end));
-    const cancelledOrders = await Order.find(cancelledQuery).lean();
+    //group all orders by business date with all needed metrics
+    const [ordersByDayAgg, expensesRaw, depositsRaw] = await Promise.all([
+      Order.aggregate([
+        { $match: dateFilter },
+        { $addFields: {
+            businessDate: { $dateToString: {
+              format: "%Y-%m-%d",
+              date: { $cond: [{ $eq: ["$orderTiming", "later"] }, "$scheduledAt", "$createdAt"] },
+              timezone: TIMEZONE
+            }}
+        }},
+        { $group: {
+            _id: { date: "$businessDate", status: "$status" },
+            count: { $sum: 1 },
+            subtotal: { $sum: "$subtotal" },
+            tax: { $sum: "$tax" },
+            discount: { $sum: "$discount" },
+            total: { $sum: "$total" },
+            // Payment breakdowns via conditional sums
+            cashTotal: { $sum: { $cond: [
+              { $and: [{ $ne: ["$status", "cancelled"] }, { $in: ["$orderSource", ["pos"]] }] },
+              "$total", 0
+            ]}},
+            // Order types
+            takeoutTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "takeout"] }] }, "$total", 0] } },
+            dineInTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $in: ["$orderType", ["dine-in", "dinein"]] }] }, "$total", 0] } },
+            deliveryTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "delivery"] }] }, "$total", 0] } },
+            driveThroughTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $in: ["$orderType", ["drive-through", "drivethrough"]] }] }, "$total", 0] } },
+            // Source breakdowns
+            onlineTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "online"] }] }, "$total", 0] } },
+            posTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "pos"] }] }, "$total", 0] } },
+            // Cancelled breakdowns
+            paidCancelled: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "cancelled"] }, { $eq: ["$paymentStatus", "paid"] }] }, 1, 0] } },
+            unpaidCancelled: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "cancelled"] }, { $ne: ["$paymentStatus", "paid"] }] }, 1, 0] } },
+            // Payment details — flatten payments array and aggregate
+            orders: { $push: { total: "$total", payments: "$payments", orderSource: "$orderSource", status: "$status" } }
+        }}
+      ]),
+      Expense.find({ expenseDate: { $gte: start, $lte: end } }).lean(),
+      Deposit.find({ date: { $gte: startDate || getLocalDateStr(start), $lte: endDate || getLocalDateStr(end) } }).lean()
+    ]);
 
-    
-    const expenses = await Expense.find({
-      expenseDate: { $gte: start, $lte: end }
-    }).lean();
+    // Build date-keyed Maps 
+    const dayDataMap = new Map(); // date -> { active: {...}, cancelled: {...} }
 
-    
-    const deposits = await Deposit.find({
-      date: {
-        $gte: startDate || getLocalDateStr(start),
-        $lte: endDate || getLocalDateStr(end)
+    for (const row of ordersByDayAgg) {
+      const dateStr = row._id.date;
+      if (!dayDataMap.has(dateStr)) {
+        dayDataMap.set(dateStr, {
+          subtotal: 0, tax: 0, discount: 0, total: 0,
+          takeout: 0, dineIn: 0, delivery: 0, driveThrough: 0,
+          online: 0, pos: 0,
+          completedCount: 0, paidCancelledCount: 0, unpaidCancelledCount: 0,
+          cashSales: 0, cardSales: 0, accountPaySales: 0,
+          orders: []
+        });
       }
-    }).lean();
+      const day = dayDataMap.get(dateStr);
 
-    
+      if (row._id.status !== "cancelled") {
+        day.subtotal += row.subtotal;
+        day.tax += row.tax;
+        day.discount += row.discount;
+        day.total += row.total;
+        day.takeout += row.takeoutTotal;
+        day.dineIn += row.dineInTotal;
+        day.delivery += row.deliveryTotal;
+        day.driveThrough += row.driveThroughTotal;
+        day.online += row.onlineTotal;
+        day.pos += row.posTotal;
+        if (row._id.status === "completed") day.completedCount += row.count;
+        day.orders.push(...row.orders);
+      } else {
+        day.paidCancelledCount += row.paidCancelled;
+        day.unpaidCancelledCount += row.unpaidCancelled;
+      }
+    }
+
+    // Process payment breakdowns per day from pushed orders
+    for (const [, day] of dayDataMap) {
+      let cashSales = 0, cardSales = 0, accountPaySales = 0;
+      for (const o of day.orders) {
+        if (o.status === "cancelled") continue;
+        const orderPayments = o.payments && o.payments.length > 0
+          ? o.payments
+          : [{ method: "cash", amount: o.total || 0 }];
+        for (const p of orderPayments) {
+          const method = p.method ? p.method.toLowerCase() : "cash";
+          if (method === "cash") cashSales += p.amount;
+          else if (method === "credit" || method === "card" || method === "debit") cardSales += p.amount;
+          else accountPaySales += p.amount;
+        }
+      }
+      day.cashSales = cashSales;
+      day.cardSales = cardSales;
+      day.accountPaySales = accountPaySales;
+      delete day.orders; // Free memory
+    }
+
+    const expenseMap = new Map();
+    for (const e of expensesRaw) {
+      const dateStr = e.expenseDate ? getLocalDateStr(new Date(e.expenseDate)) : null;
+      if (dateStr) {
+        if (!expenseMap.has(dateStr)) expenseMap.set(dateStr, []);
+        expenseMap.get(dateStr).push(e);
+      }
+    }
+    const depositMap = new Map();
+    for (const d of depositsRaw) {
+      depositMap.set(d.date, d);
+    }
+
+    // Iterate day by day — now just Map lookups 
     const result = [];
-    // Iterate day by day using local date strings
     const startDateStr = startDate || getLocalDateStr(start);
     const endDateStr = endDate || getLocalDateStr(end);
     const currentDate = new Date(startDateStr);
     const stopDate = new Date(endDateStr);
 
     while (currentDate <= stopDate) {
-      const dateStr = currentDate.toISOString().split("T")[0]; 
+      const dateStr = currentDate.toISOString().split("T")[0];
       const dateParts = dateStr.split("-");
-      const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`; 
+      const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`;
 
-      
-      const dayOrders = orders.filter(o => getLocalDateStr(getOrderBusinessDate(o)) === dateStr);
-      const dayCancelled = cancelledOrders.filter(o => getLocalDateStr(getOrderBusinessDate(o)) === dateStr);
-      const dayExpenses = expenses.filter(e => e.expenseDate && getLocalDateStr(new Date(e.expenseDate)) === dateStr);
-      const dayDeposit = deposits.find(d => d.date === dateStr) || { cashAmount: 0, cardAmount: 0, accountPayAmount: 0 };
+      const day = dayDataMap.get(dateStr) || {
+        subtotal: 0, tax: 0, discount: 0, total: 0,
+        takeout: 0, dineIn: 0, delivery: 0, driveThrough: 0,
+        online: 0, pos: 0,
+        completedCount: 0, paidCancelledCount: 0, unpaidCancelledCount: 0,
+        cashSales: 0, cardSales: 0, accountPaySales: 0
+      };
+      const dayExpenses = expenseMap.get(dateStr) || [];
+      const dayDeposit = depositMap.get(dateStr) || { cashAmount: 0, cardAmount: 0, accountPayAmount: 0 };
 
-      
-      const subtotal = dayOrders.reduce((sum, o) => sum + (o.subtotal || 0), 0);
-      const discount = dayOrders.reduce((sum, o) => sum + (o.discount || 0), 0);
-      const tax = dayOrders.reduce((sum, o) => sum + (o.tax || 0), 0);
-      const grandTotal = dayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
-
-      
+      const grandTotal = day.total;
       const tips = grandTotal > 0 ? round2(grandTotal * 0.02) : 0;
       const finalAmount = round2(grandTotal + tips);
 
-      
-      let cashSales = 0;
-      let cardSales = 0;
-      let accountPaySales = 0;
-
-      for (const o of dayOrders) {
-        const orderPayments = o.payments && o.payments.length > 0
-          ? o.payments
-          : [{ method: "cash", amount: o.total || 0 }];
-
-        for (const p of orderPayments) {
-          const method = p.method ? p.method.toLowerCase() : "cash";
-          if (method === "cash") {
-            cashSales += p.amount;
-          } else if (method === "credit" || method === "card") {
-            cardSales += p.amount;
-          } else if (method === "debit") {
-            cardSales += p.amount;
-          } else {
-            accountPaySales += p.amount;
-          }
-        }
-      }
-
-      
-      const debitCardSales = round2(cardSales * 0.4);
-      const creditCardSales = round2(cardSales * 0.6);
-      const finalCashSales = round2(cashSales);
-      const finalAccountPaySales = round2(accountPaySales);
+      const debitCardSales = round2(day.cardSales * 0.4);
+      const creditCardSales = round2(day.cardSales * 0.6);
+      const finalCashSales = round2(day.cashSales);
+      const finalAccountPaySales = round2(day.accountPaySales);
       const paymentGrandTotal = round2(finalCashSales + debitCardSales + creditCardSales + finalAccountPaySales);
 
-      
       const debitTips = round2(tips * 0.4);
       const creditTips = round2(tips * 0.6);
       const paymentFinalAmount = round2(paymentGrandTotal + debitTips + creditTips);
 
-      
-      let takeout = 0;
-      let dineIn = 0;
-      let delivery = 0;
-      let driveThrough = 0;
+      const orderTypeTotal = round2(day.takeout + day.dineIn + day.delivery + day.driveThrough);
 
-      for (const o of dayOrders) {
-        const type = o.orderType ? o.orderType.toLowerCase() : "takeout";
-        const val = o.total || 0;
-        if (type === "takeout") takeout += val;
-        else if (type === "dine-in" || type === "dinein") dineIn += val;
-        else if (type === "delivery") delivery += val;
-        else if (type === "drive-through" || type === "drivethrough") driveThrough += val;
-      }
-
-      const orderTypeTotal = round2(takeout + dineIn + delivery + driveThrough);
-
-      
-      const completedCount = dayOrders.filter(o => o.status === "completed").length;
-      const paidCancelledCount = dayCancelled.filter(o => o.paymentStatus === "paid").length;
-      const unpaidCancelledCount = dayCancelled.filter(o => o.paymentStatus !== "paid").length;
-      const refundCount = 0;
-      const refundAmount = 0;
-
-      
-      const gst = round2(tax);
-      const pst = 0;
-      const hst = 0;
-      const taxTotal = gst;
-
-      
+      const gst = round2(day.tax);
       const amexFinalAmount = round2(creditCardSales * 0.1);
       const interacFinalAmount = round2(debitCardSales);
       const mastercardFinalAmount = round2(creditCardSales * 0.4);
       const visaFinalAmount = round2(creditCardSales * 0.5);
 
-      
-      let websiteOnline = 0;
-      let uberOnline = 0;
-      let skipOnline = 0;
-      let doordashOnline = 0;
+      const onlineTotal = round2(day.online);
+      const posTotal = round2(day.pos);
 
-      for (const o of dayOrders) {
-        if (o.orderSource === "online") {
-          websiteOnline += o.total || 0;
-        }
-      }
-      const onlineTotal = round2(websiteOnline + uberOnline + skipOnline + doordashOnline);
-
-      
-      const posSales = dayOrders.filter(o => o.orderSource === "pos").reduce((sum, o) => sum + (o.total || 0), 0);
-      const posTotal = round2(posSales);
-
-      
       const totalExpense = dayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
 
-      
       const depositCash = dayDeposit.cashAmount || 0;
       const depositCard = dayDeposit.cardAmount || 0;
       const depositAccountPay = dayDeposit.accountPayAmount || 0;
-
       const expectedCash = Math.max(0, finalCashSales - totalExpense);
       const shortageCash = round2(depositCash - expectedCash);
-      const shortageCard = 0;
-      const shortageAccountPay = 0;
 
-      
       result.push({
         date: reportDateFormatted,
         rawDate: dateStr,
         salesSummary: {
-          subtotal: round2(subtotal),
+          subtotal: round2(day.subtotal),
           deliveryCharges: 0,
           debitCharges: 0,
-          discount: round2(discount),
-          tax: round2(tax),
+          discount: round2(day.discount),
+          tax: round2(day.tax),
           grandTotal: round2(grandTotal),
           tips: round2(tips),
           finalAmount: round2(finalAmount)
@@ -1715,25 +1790,20 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
           finalAmount: paymentFinalAmount
         },
         orderType: {
-          takeout: round2(takeout),
-          dineIn: round2(dineIn),
-          delivery: round2(delivery),
-          driveThrough: round2(driveThrough),
+          takeout: round2(day.takeout),
+          dineIn: round2(day.dineIn),
+          delivery: round2(day.delivery),
+          driveThrough: round2(day.driveThrough),
           total: orderTypeTotal
         },
         orders: {
-          completed: completedCount,
-          paidCancelled: paidCancelledCount,
-          unpaidCancelled: unpaidCancelledCount,
-          refund: refundCount,
-          refundAmount: refundAmount
+          completed: day.completedCount,
+          paidCancelled: day.paidCancelledCount,
+          unpaidCancelled: day.unpaidCancelledCount,
+          refund: 0,
+          refundAmount: 0
         },
-        taxBreakdown: {
-          pst,
-          gst,
-          hst,
-          total: taxTotal
-        },
+        taxBreakdown: { pst: 0, gst, hst: 0, total: gst },
         cardType: {
           amex: amexFinalAmount,
           interac: interacFinalAmount,
@@ -1741,24 +1811,13 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
           visa: visaFinalAmount
         },
         online: {
-          website: round2(websiteOnline),
-          uber: round2(uberOnline),
-          skip: round2(skipOnline),
-          doordash: round2(doordashOnline),
+          website: round2(day.online),
+          uber: 0, skip: 0, doordash: 0,
           total: onlineTotal
         },
-        pos: {
-          posSales: posTotal,
-          total: posTotal
-        },
-        expense: {
-          amount: round2(totalExpense)
-        },
-        shortage: {
-          cash: shortageCash,
-          card: shortageCard,
-          accountPay: shortageAccountPay
-        },
+        pos: { posSales: posTotal, total: posTotal },
+        expense: { amount: round2(totalExpense) },
+        shortage: { cash: shortageCash, card: 0, accountPay: 0 },
         deposit: {
           cash: round2(depositCash),
           card: round2(depositCard),

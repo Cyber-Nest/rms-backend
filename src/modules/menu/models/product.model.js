@@ -62,20 +62,20 @@ const productSchema = new mongoose.Schema({
 });
 
 
+const ProductCounterSchema = new mongoose.Schema({
+  _id: { type: String }, 
+  count: { type: Number, default: 2000 },
+});
+const ProductCounter = mongoose.model("ProductCounter", ProductCounterSchema);
+
 productSchema.pre('save', async function() {
   if (this.isNew && !this.productId) {
-    const Product = this.constructor;
-    const products = await Product.find({ productId: { $regex: /^M\d+$/ } }, 'productId');
-    let nextNumber = 2000;
-    if (products.length > 0) {
-      const numbers = products.map(p => {
-        const match = p.productId.match(/^M(\d+)$/);
-        return match ? parseInt(match[1], 10) : 2000;
-      });
-      const maxNumber = Math.max(...numbers);
-      nextNumber = maxNumber + 1;
-    }
-    this.productId = `M${nextNumber}`;
+    const counter = await ProductCounter.findOneAndUpdate(
+      { _id: "productId" },
+      { $inc: { count: 1 } },
+      { new: true, upsert: true }
+    );
+    this.productId = `M${counter.count}`;
   }
 });
 
@@ -89,5 +89,6 @@ productSchema.set('toObject', { virtuals: true });
 productSchema.index({ categoryId: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ name: 1 });
+productSchema.index({ isActive: 1, categoryId: 1 });
 
 module.exports = mongoose.model('Product', productSchema);
