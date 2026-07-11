@@ -66,7 +66,7 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
     } else if (type === "hourly_sales") {
       csvContent += formatRow(["Time Slot", "# Orders", "Total Sales"]);
 
-      const activeSlots = data.filter((slot) => slot.startHour >= 10 && slot.startHour <= 21);
+      const activeSlots = data.filter((slot) => slot.orderCount > 0 || (slot.startHour >= 10 && slot.startHour <= 21));
       let grandOrders = 0;
       let grandSales = 0;
 

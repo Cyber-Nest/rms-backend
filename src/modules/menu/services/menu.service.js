@@ -234,7 +234,7 @@ exports.getPOSMenuFeed = async () => {
       return cachedPOSMenuFeed;
     }
 
-    const categories = await Category.find({ isActive: true }).sort({ displayOrder: 1 });
+    const categories = await Category.find({ isActive: true }).sort({ displayOrder: 1 }).lean();
     const activeCategoryIds = categories.map(cat => cat._id);
     const products = await Product.find({ isActive: true, categoryId: { $in: activeCategoryIds } })
       .populate({
@@ -242,7 +242,8 @@ exports.getPOSMenuFeed = async () => {
         populate: {
           path: 'options.modifierGroups'
         }
-      });
+      })
+      .lean();
     
     const feed = {
       categories: categories.map(cat => ({

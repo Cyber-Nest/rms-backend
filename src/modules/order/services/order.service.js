@@ -16,30 +16,30 @@ const round2 = (num) => {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 };
 
-const buildDateFilter = (start, end) => {
+const buildDateFilter = (start, end, baseFilter = {}) => {
   if (start && end) {
     return {
       $or: [
-        { orderTiming: { $ne: "later" }, createdAt: { $gte: start, $lte: end } },
-        { orderTiming: "later", scheduledAt: { $gte: start, $lte: end } }
+        { ...baseFilter, orderTiming: { $ne: "later" }, createdAt: { $gte: start, $lte: end } },
+        { ...baseFilter, orderTiming: "later", scheduledAt: { $gte: start, $lte: end } }
       ]
     };
   } else if (start) {
     return {
       $or: [
-        { orderTiming: { $ne: "later" }, createdAt: { $gte: start } },
-        { orderTiming: "later", scheduledAt: { $gte: start } }
+        { ...baseFilter, orderTiming: { $ne: "later" }, createdAt: { $gte: start } },
+        { ...baseFilter, orderTiming: "later", scheduledAt: { $gte: start } }
       ]
     };
   } else if (end) {
     return {
       $or: [
-        { orderTiming: { $ne: "later" }, createdAt: { $lte: end } },
-        { orderTiming: "later", scheduledAt: { $lte: end } }
+        { ...baseFilter, orderTiming: { $ne: "later" }, createdAt: { $lte: end } },
+        { ...baseFilter, orderTiming: "later", scheduledAt: { $lte: end } }
       ]
     };
   }
-  return {};
+  return baseFilter;
 };
 
 let productLookupCache = null;
@@ -198,7 +198,7 @@ exports.createOrder = async (orderData) => {
 // ── Get All Orders ────────────────────────────────────────────
 exports.getAllOrders = async (filters = {}) => {
   try {
-    const query = {};
+    let query = {};
 
     if (filters.status) {
       if (typeof filters.status === 'string' && filters.status.includes(',')) {
@@ -238,8 +238,7 @@ exports.getAllOrders = async (filters = {}) => {
       end = getLocalEndOfDay(filters.date);
     }
 
-    const dateFilter = buildDateFilter(start, end);
-    Object.assign(query, dateFilter);
+    query = buildDateFilter(start, end, query);
 
     // Server-side search filter
     if (filters.search) {
@@ -987,7 +986,7 @@ exports.getUniqueCustomers = async (filters = {}) => {
   try {
     const pipeline = [];
 
-    const matchQuery = {
+    let matchQuery = {
       "customer.name": { $exists: true, $nin: ["", null] },
       $or: [
         { "customer.phone": { $exists: true, $nin: ["", "No phone", "No Phone", null] } },
@@ -999,8 +998,13 @@ exports.getUniqueCustomers = async (filters = {}) => {
     if (filters.date) {
       const start = getLocalStartOfDay(filters.date);
       const end = getLocalEndOfDay(filters.date);
-      const dateFilter = buildDateFilter(start, end);
-      Object.assign(matchQuery, dateFilter);
+      matchQuery = buildDateFilter(start, end, {
+        "customer.name": { $exists: true, $nin: ["", null] },
+        $or: [
+          { "customer.phone": { $exists: true, $nin: ["", "No phone", "No Phone", null] } },
+          { "customer.email": { $exists: true, $nin: ["", "No email", "No Email", null] } }
+        ]
+      });
     }
 
     pipeline.push({ $match: matchQuery });
@@ -1418,7 +1422,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
     const { categoryMap: productCategoryMap, idMap: productIDMap } = await getProductLookups();
 
     
-    const matchQuery = { status: { $ne: "cancelled" } };
+    const baseFilter = { status: { $ne: "cancelled" } };
     let start, end;
     if (startDate && endDate) {
       start = getLocalStartOfDay(startDate);
@@ -1428,12 +1432,12 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
       start = getLocalStartOfDay(todayStr);
       end = getLocalEndOfDay(todayStr);
     }
-    const dateFilter = buildDateFilter(start, end);
-    Object.assign(matchQuery, dateFilter);
+    const matchQuery = buildDateFilter(start, end, baseFilter);
 
     
     const aggregatedItems = await Order.aggregate([
       { $match: matchQuery },
+      { $project: { items: 1 } },
       { $unwind: "$items" },
       {
         $group: {
@@ -1513,7 +1517,9 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
 exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
   try {
     const TIMEZONE = "America/Edmonton";
-    const matchQuery = { status: { $ne: "cancelled" } };
+    const baseFilter = { 
+      status: { $in: ["pending", "preparing", "ready", "completed"] } 
+    };
     let start, end;
     if (startDate && endDate) {
       start = getLocalStartOfDay(startDate);
@@ -1523,13 +1529,13 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
       start = getLocalStartOfDay(todayStr);
       end = getLocalEndOfDay(todayStr);
     }
-    const dateFilter = buildDateFilter(start, end);
-    Object.assign(matchQuery, dateFilter);
+    const matchQuery = buildDateFilter(start, end, baseFilter);
 
-    // Aggregation: group by hour in local timezone
+    // Aggregation: group by hour in local timezone 
     const hourlyData = await Order.aggregate([
       { $match: matchQuery },
-      { $addFields: {
+      { $project: {
+          total: 1,
           businessHour: { $hour: {
             date: { $cond: [{ $eq: ["$orderTiming", "later"] }, "$scheduledAt", "$createdAt"] },
             timezone: TIMEZONE
@@ -1548,21 +1554,28 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
       hourMap.set(row._id, { orderCount: row.orderCount, totalSales: row.totalSales });
     }
 
-    // Define hourly slots matching restaurant active hours (10 AM to 10 PM)
-    const hourlySlots = [
-      { label: "10 AM to 11 AM", startHour: 10, endHour: 11, orderCount: 0, totalSales: 0 },
-      { label: "11 AM to 12 PM", startHour: 11, endHour: 12, orderCount: 0, totalSales: 0 },
-      { label: "12 PM to 1 PM", startHour: 12, endHour: 13, orderCount: 0, totalSales: 0 },
-      { label: "1 PM to 2 PM", startHour: 13, endHour: 14, orderCount: 0, totalSales: 0 },
-      { label: "2 PM to 3 PM", startHour: 14, endHour: 15, orderCount: 0, totalSales: 0 },
-      { label: "3 PM to 4 PM", startHour: 15, endHour: 16, orderCount: 0, totalSales: 0 },
-      { label: "4 PM to 5 PM", startHour: 16, endHour: 17, orderCount: 0, totalSales: 0 },
-      { label: "5 PM to 6 PM", startHour: 17, endHour: 18, orderCount: 0, totalSales: 0 },
-      { label: "6 PM to 7 PM", startHour: 18, endHour: 19, orderCount: 0, totalSales: 0 },
-      { label: "7 PM to 8 PM", startHour: 19, endHour: 20, orderCount: 0, totalSales: 0 },
-      { label: "8 PM to 9 PM", startHour: 20, endHour: 21, orderCount: 0, totalSales: 0 },
-      { label: "9 PM to 10 PM", startHour: 21, endHour: 22, orderCount: 0, totalSales: 0 }
-    ];
+    // Define hourly slots dynamically for all 24 hours of the day
+    const hourlySlots = [];
+    for (let h = 0; h < 24; h++) {
+      let label = "";
+      if (h === 0) {
+        label = "12 AM to 1 AM";
+      } else if (h === 12) {
+        label = "12 PM to 1 PM";
+      } else if (h < 12) {
+        label = `${h} AM to ${h + 1 === 12 ? "12 PM" : (h + 1) + " AM"}`;
+      } else {
+        const hr12 = h - 12;
+        label = `${hr12} PM to ${hr12 + 1 === 12 ? "12 AM" : (hr12 + 1) + " PM"}`;
+      }
+      hourlySlots.push({
+        label,
+        startHour: h,
+        endHour: (h + 1) % 24,
+        orderCount: 0,
+        totalSales: 0
+      });
+    }
 
     // Map aggregation results to slots
     for (const slot of hourlySlots) {
