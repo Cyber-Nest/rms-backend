@@ -32,7 +32,7 @@ exports.createOrder = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, orderType, paymentStatus, date, startDate, endDate, fields, excludeReceptionCompleted } = req.query;
+    const { status, orderType, paymentStatus, date, startDate, endDate, fields, excludeReceptionCompleted, page, limit, search } = req.query;
     const orders = await orderService.getAllOrders({
       status,
       orderType,
@@ -41,7 +41,10 @@ exports.getAllOrders = async (req, res) => {
       startDate,
       endDate,
       fields,
-      excludeReceptionCompleted: excludeReceptionCompleted === 'true'
+      excludeReceptionCompleted: excludeReceptionCompleted === 'true',
+      page,
+      limit,
+      search
     });
     res.status(200).json({ success: true, data: orders });
   } catch (error) {
@@ -63,7 +66,8 @@ exports.getSalesSummary = async (req, res) => {
 
 exports.getReportsSummary = async (req, res) => {
   try {
-    const summary = await orderService.getReportsSummary();
+    const { startDate, endDate } = req.query;
+    const summary = await orderService.getReportsSummary({ startDate, endDate });
     res.status(200).json({ success: true, data: summary });
   } catch (error) {
     handleError(res, error, 500);
