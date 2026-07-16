@@ -230,6 +230,7 @@ exports.generateReceiptPdf = (order, res) => {
     const discount = order.discount || 0;
     const tax = order.tax || 0;
     const taxRate = order.taxRate || 0.05;
+    const deliveryFee = order.deliveryFee || 0;
     const total = order.total || 0;
 
     doc.font("Helvetica").fontSize(8.5);
@@ -265,7 +266,19 @@ exports.generateReceiptPdf = (order, res) => {
         rowY,
         { width: 106, align: "right" },
       );
-    doc.moveDown(0.4);
+    doc.moveDown(0.3);
+
+    if (deliveryFee > 0) {
+      rowY = doc.y;
+      doc.font("Helvetica").text("Delivery Fee :", startX, rowY, { width: 100 });
+      doc
+        .font("Helvetica-Bold")
+        .text(`$${deliveryFee.toFixed(2)}`, startX + 100, rowY, {
+          width: 106,
+          align: "right",
+        });
+      doc.moveDown(0.4);
+    }
 
     rowY = doc.y;
     doc

@@ -49,6 +49,10 @@ if (process.env.USER_FRONTEND_URL) {
   allowedOrigins.push(process.env.USER_FRONTEND_URL.trim());
 }
 
+if (process.env.DRIVER_FRONTEND_URL) {
+  allowedOrigins.push(process.env.DRIVER_FRONTEND_URL.trim());
+}
+
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -87,12 +91,14 @@ const { initOrderModule } = require("./modules/order");
 const { initPromoModule } = require("./modules/promo");
 const { initExpenseModule } = require("./modules/expense");
 const { initPaymentModule } = require("./modules/payment");
+const { initDeliveryModule } = require("./modules/delivery");
 
 initMenuModule(app);
 initOrderModule(app);
 initPromoModule(app);
 initExpenseModule(app);
 initPaymentModule(app);
+initDeliveryModule(app);
 
 
 app.get("/api/health", (req, res) => {

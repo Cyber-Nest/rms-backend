@@ -55,6 +55,8 @@ const customerSchema = new mongoose.Schema(
     email: { type: String, default: "" },
     address: { type: String, default: "" },
     postalCode: { type: String, default: "" },
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
   },
   { _id: false },
 );
@@ -95,6 +97,7 @@ const orderSchema = new mongoose.Schema(
       default: "none",
     },
     promoCode: { type: String, default: "" },
+    deliveryFee: { type: Number, default: 0 },
     total: { type: Number, required: true },
 
     
@@ -137,6 +140,10 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
     },
     receptionCompleted: {
+      type: Boolean,
+      default: false,
+    },
+    kitchenCleared: {
       type: Boolean,
       default: false,
     },
@@ -221,5 +228,6 @@ orderSchema.index({ orderTiming: 1, scheduledAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ receptionCompleted: 1, status: 1 });
+orderSchema.index({ kitchenCleared: 1, status: 1 });
 
 module.exports = mongoose.model("Order", orderSchema);
