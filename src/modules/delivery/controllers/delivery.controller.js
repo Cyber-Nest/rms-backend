@@ -670,3 +670,46 @@ exports.trackDelivery = async (req, res) => {
     handleError(res, error, 500);
   }
 };
+
+/**
+ * POST: Server-relay for Driver Location tracking.
+ * Bypasses the need for Client Events to be enabled in Pusher Dashboard.
+ */
+exports.updateDriverLocation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lat, lng, bearing, phase, activeOrderIds } = req.body;
+
+    if (!lat || !lng) {
+      return res.status(400).json({ success: false, message: "Missing coordinates" });
+    }
+
+    const payload = {
+      driverId: id,
+      lat,
+      lng,
+      bearing: bearing || 0,
+      phase: phase || "idle",
+      timestamp: Date.now(),
+    };
+
+    const pusher = require("../../../config/pusher");
+
+    // 1. Broadcast to branch dashboard (kitchen)
+    // Using event name "driver-location-update" instead of "client-driver-location" to avoid client- prefix restrictions
+    if (pusher.pusherInstance) {
+      pusher.pusherInstance.trigger("private-restaurant-default", "driver-location-update", payload);
+
+      // 2. Broadcast to customer tracking maps
+      if (activeOrderIds && Array.isArray(activeOrderIds) && activeOrderIds.length > 0) {
+        activeOrderIds.forEach((orderId) => {
+          pusher.pusherInstance.trigger(`private-order-${orderId}`, "driver-location-update", payload);
+        });
+      }
+    }
+
+    res.status(200).json({ success: true, message: "Location relayed successfully" });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};

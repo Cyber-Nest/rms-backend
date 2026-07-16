@@ -173,6 +173,7 @@ const triggerDriverStatusChange = async (restaurantId, driverData) => {
 };
 
 module.exports = {
+  pusherInstance,
   triggerNewOrder,
   triggerOrderUpdated,
   authenticateChannel,
