@@ -175,6 +175,23 @@ exports.updateOrderStatus = async (req, res) => {
 };
 
 
+exports.kitchenClear = async (req, res) => {
+  try {
+    const order = await orderService.kitchenClear(req.params.id);
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: order._id,
+        status: order.status,
+        kitchenCleared: order.kitchenCleared
+      }
+    });
+  } catch (error) {
+    handleError(res, error, 400);
+  }
+};
+
+
 exports.markOrderPaid = async (req, res) => {
   try {
     const { payments } = req.body;

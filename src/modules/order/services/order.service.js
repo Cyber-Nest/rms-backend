@@ -203,17 +203,15 @@ exports.getAllOrders = async (filters = {}) => {
     if (filters.status) {
       if (typeof filters.status === 'string' && filters.status.includes(',')) {
         const statuses = filters.status.split(',');
-        if (filters.excludeReceptionCompleted && statuses.includes('completed')) {
-          query.$or = [
-            { status: { $in: statuses.filter(s => s !== 'completed') } },
-            { status: 'completed', receptionCompleted: { $ne: true } }
-          ];
+        if (filters.excludeReceptionCompleted) {
+          query.status = { $in: statuses };
+          query.receptionCompleted = { $ne: true };
         } else {
           query.status = { $in: statuses };
         }
       } else {
-        if (filters.excludeReceptionCompleted && filters.status === 'completed') {
-          query.status = 'completed';
+        if (filters.excludeReceptionCompleted) {
+          query.status = filters.status;
           query.receptionCompleted = { $ne: true };
         } else {
           query.status = filters.status;
@@ -373,6 +371,31 @@ exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = u
     return order;
   } catch (error) {
     logger.error(`Order Service Error: updateOrderStatus - ${error.message}`);
+    throw error;
+  }
+};
+
+// ── Clear from Kitchen ────────────────────────────────────────
+exports.kitchenClear = async (id) => {
+  try {
+    const order = await Order.findById(id);
+    if (!order) throw new Error("Order not found.");
+
+    if (!order.kitchenCleared) {
+      order.kitchenCleared = true;
+      order.statusHistory.push({ status: order.status, changedAt: new Date(), note: "Cleared from kitchen (Handed over)" });
+      await order.save();
+
+      // Trigger real-time notification via Pusher
+      triggerOrderUpdated(order).catch((err) => {
+        logger.error(`Error triggering real-time update Pusher event: ${err.message}`);
+      });
+      logger.info(`Order ${order.orderNumber} cleared from kitchen.`);
+    }
+
+    return order;
+  } catch (error) {
+    logger.error(`Order Service Error: kitchenClear - ${error.message}`);
     throw error;
   }
 };
@@ -945,25 +968,39 @@ exports.getDashboardMetrics = async (filters = {}) => {
       const orderDate = getOrderBusinessDate(order);
       const phone = order.phone?.trim();
       const email = order.email?.trim();
-      if (phone && !phoneToEarliestDate.has(phone)) phoneToEarliestDate.set(phone, orderDate);
-      if (email && !emailToEarliestDate.has(email)) emailToEarliestDate.set(email, orderDate);
+      if (phone) {
+        const existing = phoneToEarliestDate.get(phone);
+        if (!existing || orderDate < existing) {
+          phoneToEarliestDate.set(phone, orderDate);
+        }
+      }
+      if (email) {
+        const existing = emailToEarliestDate.get(email);
+        if (!existing || orderDate < existing) {
+          emailToEarliestDate.set(email, orderDate);
+        }
+      }
     }
 
+    const seenCustomers = new Set();
     for (const order of (aggResult?.customerData || [])) {
-      const orderDate = getOrderBusinessDate(order);
       const phone = order.phone?.trim();
       const email = order.email?.trim();
-      if (phone || email) {
-        let hasPrev = false;
-        if (phone && phoneToEarliestDate.has(phone)) {
-          if (new Date(phoneToEarliestDate.get(phone)) < orderDate) hasPrev = true;
-        }
-        if (!hasPrev && email && emailToEarliestDate.has(email)) {
-          if (new Date(emailToEarliestDate.get(email)) < orderDate) hasPrev = true;
-        }
-        if (hasPrev) returningCustomers += 1;
-        else newCustomers += 1;
+      const customerKey = phone || email;
+      if (!customerKey) continue;
+
+      if (seenCustomers.has(customerKey)) continue;
+      seenCustomers.add(customerKey);
+
+      let hasPrev = false;
+      if (phone && phoneToEarliestDate.has(phone)) {
+        if (new Date(phoneToEarliestDate.get(phone)) < todayStart) hasPrev = true;
       }
+      if (!hasPrev && email && emailToEarliestDate.has(email)) {
+        if (new Date(emailToEarliestDate.get(email)) < todayStart) hasPrev = true;
+      }
+      if (hasPrev) returningCustomers += 1;
+      else newCustomers += 1;
     }
 
     return {

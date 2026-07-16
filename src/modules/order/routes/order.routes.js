@@ -18,6 +18,7 @@ router.get('/',               orderController.getAllOrders);
 router.get('/:id',            orderController.getOrderById);
 router.get('/:id/pdf',        orderController.downloadReceiptPdf);
 router.patch('/:id/status',   orderController.updateOrderStatus);
+router.patch('/:id/kitchen-clear', orderController.kitchenClear);
 router.patch('/:id/due-time', orderController.updateOrderDueTime);
 router.patch('/:id/payment',  orderController.markOrderPaid);
 router.patch('/:id',          orderController.updateOrderItems);
