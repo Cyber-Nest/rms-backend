@@ -11,8 +11,10 @@ router.get("/orders", deliveryController.getDeliveryOrders);
 router.get("/drivers", deliveryController.getDrivers);
 router.get("/vehicles", deliveryController.getVehicles);
 router.post("/assign", deliveryController.assignDriver);
+router.post("/unassign", deliveryController.unassignDriver);
 router.post("/vehicles/assign", deliveryController.assignVehicle);
 router.delete("/vehicles/unassign/:driverId", deliveryController.unassignVehicle);
+router.post("/driver/:driverId/complete-active", deliveryController.completeActiveAssignment);
 
 //Driver side
 router.post("/driver/login", deliveryController.driverLogin);
