@@ -353,7 +353,25 @@ exports.driverLogin = async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid password." });
     }
 
-    await Driver.findByIdAndUpdate(driver._id, { status: "available" });
+    // Check if the driver has active assignments to recover their state
+    const activeAssignments = await DeliveryAssignment.find({
+      driverId: driver._id,
+      status: { $in: ["assigned", "en-route", "delivered"] },
+    }).lean();
+
+    let recoveredStatus = "available";
+    let activeOrderIds = [];
+
+    if (activeAssignments.length > 0) {
+      activeOrderIds = activeAssignments.map((a) => a.orderId);
+      const hasDelivered = activeAssignments.some((a) => a.status === "delivered");
+      recoveredStatus = hasDelivered ? "returning" : "on-delivery";
+    }
+
+    await Driver.findByIdAndUpdate(driver._id, {
+      status: recoveredStatus,
+      activeOrderIds,
+    });
 
     // Get vehicle info
     let assignedVehicle = null;
@@ -364,7 +382,7 @@ exports.driverLogin = async (req, res) => {
     // Trigger status change
     await triggerDriverStatusChange(driver.restaurantId, {
       driverId: driver._id.toString(),
-      status: "available",
+      status: recoveredStatus,
     });
 
     res.status(200).json({
@@ -375,7 +393,7 @@ exports.driverLogin = async (req, res) => {
         name: driver.name,
         phone: driver.phone,
         color: driver.color,
-        status: "available",
+        status: recoveredStatus,
         restaurantId: driver.restaurantId,
         assignedVehicle,
       },
@@ -709,6 +727,109 @@ exports.updateDriverLocation = async (req, res) => {
     }
 
     res.status(200).json({ success: true, message: "Location relayed successfully" });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * POST: Unassign Driver from Order
+ * Body: { orderId }
+ */
+exports.unassignDriver = async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: "orderId is required." });
+    }
+
+    const assignment = await DeliveryAssignment.findOne({
+      orderId,
+      status: { $in: ["assigned", "en-route"] },
+    });
+
+    if (!assignment) {
+      return res.status(404).json({ success: false, message: "No active assignment found for this order." });
+    }
+
+    const driverId = assignment.driverId;
+    const restaurantId = assignment.restaurantId || "default";
+
+    // Delete assignment
+    await DeliveryAssignment.deleteOne({ _id: assignment._id });
+
+    // Update driver state
+    const driver = await Driver.findById(driverId);
+    if (driver) {
+      driver.activeOrderIds = driver.activeOrderIds.filter(
+        (oid) => oid.toString() !== orderId.toString()
+      );
+      if (driver.activeOrderIds.length === 0) {
+        driver.status = "available";
+      }
+      await driver.save();
+
+      // Trigger status change Pusher event
+      await triggerDriverStatusChange(restaurantId, {
+        driverId: driver._id.toString(),
+        status: driver.status,
+      });
+    }
+
+    // Trigger Pusher events to update maps in real-time
+    const pusher = require("../../../config/pusher");
+    if (pusher.pusherInstance) {
+      // 1. Tell order tracking map driver is unassigned
+      pusher.pusherInstance.trigger(`private-order-${orderId}`, "delivery-unassigned", {
+        orderId,
+      });
+      // 2. Tell branch dashboard to re-fetch/update
+      pusher.pusherInstance.trigger(`private-restaurant-${restaurantId}`, "delivery-assigned", {
+        unassigned: true,
+        orderId,
+      });
+    }
+
+    res.status(200).json({ success: true, message: "Driver unassigned successfully." });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * POST: Complete driver assignment manually from branch dashboard
+ * Params: driverId
+ */
+exports.completeActiveAssignment = async (req, res) => {
+  try {
+    const { driverId } = req.params;
+
+    // Find any delivered (returning) assignment for this driver
+    const assignment = await DeliveryAssignment.findOne({
+      driverId,
+      status: "delivered",
+    });
+
+    if (assignment) {
+      assignment.status = "completed";
+      assignment.completedAt = new Date();
+      await assignment.save();
+    }
+
+    const driver = await Driver.findById(driverId);
+    if (driver) {
+      driver.status = "available";
+      driver.activeOrderIds = [];
+      await driver.save();
+
+      // Trigger status change Pusher event
+      await triggerDriverStatusChange(driver.restaurantId || "default", {
+        driverId: driver._id.toString(),
+        status: "available",
+      });
+    }
+
+    res.status(200).json({ success: true, message: "Driver is now available." });
   } catch (error) {
     handleError(res, error, 500);
   }
