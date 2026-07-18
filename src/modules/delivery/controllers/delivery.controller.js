@@ -198,6 +198,108 @@ exports.getVehicles = async (req, res) => {
 };
 
 /**
+ * POST: Create a new vehicle.
+ * Body: { number, label, restaurantId }
+ */
+exports.createVehicle = async (req, res) => {
+  try {
+    const { number, label, restaurantId = "default" } = req.body;
+    if (!number || !label) {
+      return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
+    }
+
+    // Alphanumeric validation
+    const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
+    if (!alphanumericRegex.test(number)) {
+      return res.status(400).json({ success: false, message: "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only)." });
+    }
+
+    // Check if number already exists for this restaurant
+    const existing = await Vehicle.findOne({ number, restaurantId });
+    if (existing) {
+      return res.status(400).json({ success: false, message: "Vehicle number already exists." });
+    }
+
+    const vehicle = new Vehicle({ number, label, restaurantId });
+    await vehicle.save();
+
+    res.status(201).json({ success: true, data: vehicle });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * PUT: Update an existing vehicle.
+ * Params: id
+ * Body: { number, label }
+ */
+exports.updateVehicle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { number, label } = req.body;
+
+    if (!number || !label) {
+      return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
+    }
+
+    // Alphanumeric validation
+    const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
+    if (!alphanumericRegex.test(number)) {
+      return res.status(400).json({ success: false, message: "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only)." });
+    }
+
+    const vehicle = await Vehicle.findById(id);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: "Vehicle not found." });
+    }
+
+    // Check for duplicate vehicle number if changed
+    if (vehicle.number !== number) {
+      const existing = await Vehicle.findOne({ number, restaurantId: vehicle.restaurantId });
+      if (existing) {
+        return res.status(400).json({ success: false, message: "Vehicle number already exists." });
+      }
+    }
+
+    vehicle.number = number;
+    vehicle.label = label;
+    await vehicle.save();
+
+    res.status(200).json({ success: true, data: vehicle });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * DELETE: Delete a vehicle.
+ * Params: id
+ */
+exports.deleteVehicle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const vehicle = await Vehicle.findById(id);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: "Vehicle not found." });
+    }
+
+    // If vehicle is assigned to a driver, unassign it first
+    if (vehicle.isAssigned && vehicle.assignedDriverId) {
+      await Driver.findByIdAndUpdate(vehicle.assignedDriverId, {
+        assignedVehicleId: null
+      });
+    }
+
+    await Vehicle.findByIdAndDelete(id);
+
+    res.status(200).json({ success: true, message: "Vehicle deleted successfully." });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
  * POST: Assign a Driver to a Delivery Order.
  * Body: { orderId, driverId }
  */
