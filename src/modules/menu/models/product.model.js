@@ -47,6 +47,10 @@ const productSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  isOutOfStock: {
+    type: Boolean,
+    default: false,
+  },
   kitchenLabel: {
     type: String,
     enum: ['chicken', 'pizza'],
