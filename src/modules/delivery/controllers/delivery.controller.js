@@ -57,7 +57,20 @@ exports.getDeliveryOrders = async (req, res) => {
 
     const query = {
       orderType: "delivery",
-      createdAt: { $gte: startOfDay, $lte: endOfDay },
+      $or: [
+        {
+          orderTiming: "now",
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        },
+        {
+          orderTiming: "later",
+          scheduledAt: { $gte: startOfDay, $lte: endOfDay },
+        },
+        {
+          orderTiming: { $exists: false },
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        }
+      ]
     };
 
     const orders = await Order.find(query).sort({ createdAt: -1 }).lean();
@@ -109,6 +122,8 @@ exports.getDeliveryOrders = async (req, res) => {
         assignmentStatus: assignment ? assignment.status : null,
         assignedDriverId,
         createdAt: order.createdAt,
+        orderTiming: order.orderTiming,
+        scheduledAt: order.scheduledAt,
         deliveredAt: assignment?.deliveredAt || null,
         duration: "",
         timeOrdered: new Date(order.createdAt).toLocaleTimeString("en-US", {
