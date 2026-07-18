@@ -106,7 +106,10 @@ exports.getDeliveryOrders = async (req, res) => {
           lng: order.customer?.lng || null,
         },
         status: deliveryStatus,
+        assignmentStatus: assignment ? assignment.status : null,
         assignedDriverId,
+        createdAt: order.createdAt,
+        deliveredAt: assignment?.deliveredAt || null,
         duration: "",
         timeOrdered: new Date(order.createdAt).toLocaleTimeString("en-US", {
           hour: "2-digit",
@@ -804,17 +807,11 @@ exports.completeActiveAssignment = async (req, res) => {
   try {
     const { driverId } = req.params;
 
-    // Find any delivered (returning) assignment for this driver
-    const assignment = await DeliveryAssignment.findOne({
-      driverId,
-      status: "delivered",
-    });
-
-    if (assignment) {
-      assignment.status = "completed";
-      assignment.completedAt = new Date();
-      await assignment.save();
-    }
+    // Find all delivered (returning) assignments for this driver
+    await DeliveryAssignment.updateMany(
+      { driverId, status: "delivered" },
+      { $set: { status: "completed", completedAt: new Date() } }
+    );
 
     const driver = await Driver.findById(driverId);
     if (driver) {
