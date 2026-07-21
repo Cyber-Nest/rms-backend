@@ -20,7 +20,7 @@ const clearPOSMenuCache = () => {
 
 exports.getAllCategories = async () => {
   try {
-    return await Category.find().sort({ displayOrder: 1 });
+    return await Category.find().sort({ displayOrder: 1 }).lean();
   } catch (error) {
     logger.error(`Menu Service Error: getAllCategories - ${error.message}`);
     throw error;
@@ -75,7 +75,7 @@ exports.deleteCategory = async (id) => {
 
 exports.getAllModifierGroups = async () => {
   try {
-    return await ModifierGroup.find().populate('options.modifierGroups').sort({ createdAt: -1 });
+    return await ModifierGroup.find().populate('options.modifierGroups').sort({ createdAt: -1 }).lean();
   } catch (error) {
     logger.error(`Menu Service Error: getAllModifierGroups - ${error.message}`);
     throw error;
@@ -133,7 +133,8 @@ exports.getAllProducts = async () => {
           path: 'options.modifierGroups'
         }
       })
-      .sort({ name: 1 });
+      .sort({ name: 1 })
+      .lean();
   } catch (error) {
     logger.error(`Menu Service Error: getAllProducts - ${error.message}`);
     throw error;

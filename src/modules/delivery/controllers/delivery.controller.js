@@ -73,7 +73,10 @@ exports.getDeliveryOrders = async (req, res) => {
       ]
     };
 
-    const orders = await Order.find(query).sort({ createdAt: -1 }).lean();
+    const orders = await Order.find(query)
+      .select("_id orderNumber customer status paymentStatus orderType total orderTiming scheduledAt createdAt dueAt")
+      .sort({ createdAt: -1 })
+      .lean();
 
     const orderIds = orders.map(o => o._id);
     const assignments = await DeliveryAssignment.find({ orderId: { $in: orderIds } })
@@ -152,7 +155,10 @@ exports.getDeliveryOrders = async (req, res) => {
 exports.getDrivers = async (req, res) => {
   try {
     const { restaurantId = "default" } = req.query;
-    const drivers = await Driver.find({ restaurantId }).populate("assignedVehicleId").lean();
+    const drivers = await Driver.find({ restaurantId })
+      .select("_id driverId name phone status color activeOrderIds currentLocation assignedVehicleId")
+      .populate("assignedVehicleId")
+      .lean();
 
     const enriched = drivers.map((driver) => {
       const assignedVehicle = driver.assignedVehicleId;
@@ -190,7 +196,10 @@ exports.getDrivers = async (req, res) => {
 exports.getVehicles = async (req, res) => {
   try {
     const { restaurantId = "default" } = req.query;
-    const vehicles = await Vehicle.find({ restaurantId }).sort({ number: 1 }).lean();
+    const vehicles = await Vehicle.find({ restaurantId })
+      .select("_id number label status isAssigned assignedDriverId")
+      .sort({ number: 1 })
+      .lean();
     res.status(200).json({ success: true, data: vehicles });
   } catch (error) {
     handleError(res, error, 500);
