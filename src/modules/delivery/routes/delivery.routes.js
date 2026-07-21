@@ -26,7 +26,6 @@ router.get("/driver/:id/assignments", deliveryController.getDriverAssignments);
 router.patch("/driver/deliver/:assignmentId", deliveryController.markDelivered);
 router.patch("/driver/complete/:assignmentId", deliveryController.markCompleted);
 router.patch("/driver/:id/status", deliveryController.updateDriverStatus);
-router.post("/driver/:id/location", deliveryController.updateDriverLocation);
 
 //User Tracking Route
 router.get("/track/:orderId", deliveryController.trackDelivery);
