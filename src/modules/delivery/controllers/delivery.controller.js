@@ -57,10 +57,26 @@ exports.getDeliveryOrders = async (req, res) => {
 
     const query = {
       orderType: "delivery",
-      createdAt: { $gte: startOfDay, $lte: endOfDay },
+      $or: [
+        {
+          orderTiming: "now",
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        },
+        {
+          orderTiming: "later",
+          scheduledAt: { $gte: startOfDay, $lte: endOfDay },
+        },
+        {
+          orderTiming: { $exists: false },
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        }
+      ]
     };
 
-    const orders = await Order.find(query).sort({ createdAt: -1 }).lean();
+    const orders = await Order.find(query)
+      .select("_id orderNumber customer status paymentStatus orderType total orderTiming scheduledAt createdAt dueAt")
+      .sort({ createdAt: -1 })
+      .lean();
 
     const orderIds = orders.map(o => o._id);
     const assignments = await DeliveryAssignment.find({ orderId: { $in: orderIds } })
@@ -106,7 +122,12 @@ exports.getDeliveryOrders = async (req, res) => {
           lng: order.customer?.lng || null,
         },
         status: deliveryStatus,
+        assignmentStatus: assignment ? assignment.status : null,
         assignedDriverId,
+        createdAt: order.createdAt,
+        orderTiming: order.orderTiming,
+        scheduledAt: order.scheduledAt,
+        deliveredAt: assignment?.deliveredAt || null,
         duration: "",
         timeOrdered: new Date(order.createdAt).toLocaleTimeString("en-US", {
           hour: "2-digit",
@@ -134,7 +155,10 @@ exports.getDeliveryOrders = async (req, res) => {
 exports.getDrivers = async (req, res) => {
   try {
     const { restaurantId = "default" } = req.query;
-    const drivers = await Driver.find({ restaurantId }).populate("assignedVehicleId").lean();
+    const drivers = await Driver.find({ restaurantId })
+      .select("_id driverId name phone status color activeOrderIds currentLocation assignedVehicleId")
+      .populate("assignedVehicleId")
+      .lean();
 
     const enriched = drivers.map((driver) => {
       const assignedVehicle = driver.assignedVehicleId;
@@ -172,8 +196,113 @@ exports.getDrivers = async (req, res) => {
 exports.getVehicles = async (req, res) => {
   try {
     const { restaurantId = "default" } = req.query;
-    const vehicles = await Vehicle.find({ restaurantId }).sort({ number: 1 }).lean();
+    const vehicles = await Vehicle.find({ restaurantId })
+      .select("_id number label status isAssigned assignedDriverId")
+      .sort({ number: 1 })
+      .lean();
     res.status(200).json({ success: true, data: vehicles });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * POST: Create a new vehicle.
+ * Body: { number, label, restaurantId }
+ */
+exports.createVehicle = async (req, res) => {
+  try {
+    const { number, label, restaurantId = "default" } = req.body;
+    if (!number || !label) {
+      return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
+    }
+
+    // Alphanumeric validation
+    const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
+    if (!alphanumericRegex.test(number)) {
+      return res.status(400).json({ success: false, message: "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only)." });
+    }
+
+    // Check if number already exists for this restaurant
+    const existing = await Vehicle.findOne({ number, restaurantId });
+    if (existing) {
+      return res.status(400).json({ success: false, message: "Vehicle number already exists." });
+    }
+
+    const vehicle = new Vehicle({ number, label, restaurantId });
+    await vehicle.save();
+
+    res.status(201).json({ success: true, data: vehicle });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * PUT: Update an existing vehicle.
+ * Params: id
+ * Body: { number, label }
+ */
+exports.updateVehicle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { number, label } = req.body;
+
+    if (!number || !label) {
+      return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
+    }
+
+    // Alphanumeric validation
+    const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
+    if (!alphanumericRegex.test(number)) {
+      return res.status(400).json({ success: false, message: "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only)." });
+    }
+
+    const vehicle = await Vehicle.findById(id);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: "Vehicle not found." });
+    }
+
+    // Check for duplicate vehicle number if changed
+    if (vehicle.number !== number) {
+      const existing = await Vehicle.findOne({ number, restaurantId: vehicle.restaurantId });
+      if (existing) {
+        return res.status(400).json({ success: false, message: "Vehicle number already exists." });
+      }
+    }
+
+    vehicle.number = number;
+    vehicle.label = label;
+    await vehicle.save();
+
+    res.status(200).json({ success: true, data: vehicle });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * DELETE: Delete a vehicle.
+ * Params: id
+ */
+exports.deleteVehicle = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const vehicle = await Vehicle.findById(id);
+    if (!vehicle) {
+      return res.status(404).json({ success: false, message: "Vehicle not found." });
+    }
+
+    // If vehicle is assigned to a driver, unassign it first
+    if (vehicle.isAssigned && vehicle.assignedDriverId) {
+      await Driver.findByIdAndUpdate(vehicle.assignedDriverId, {
+        assignedVehicleId: null
+      });
+    }
+
+    await Vehicle.findByIdAndDelete(id);
+
+    res.status(200).json({ success: true, message: "Vehicle deleted successfully." });
   } catch (error) {
     handleError(res, error, 500);
   }
@@ -690,49 +819,6 @@ exports.trackDelivery = async (req, res) => {
 };
 
 /**
- * POST: Server-relay for Driver Location tracking.
- * Bypasses the need for Client Events to be enabled in Pusher Dashboard.
- */
-exports.updateDriverLocation = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { lat, lng, bearing, phase, activeOrderIds } = req.body;
-
-    if (!lat || !lng) {
-      return res.status(400).json({ success: false, message: "Missing coordinates" });
-    }
-
-    const payload = {
-      driverId: id,
-      lat,
-      lng,
-      bearing: bearing || 0,
-      phase: phase || "idle",
-      timestamp: Date.now(),
-    };
-
-    const pusher = require("../../../config/pusher");
-
-    // 1. Broadcast to branch dashboard (kitchen)
-    // Using event name "driver-location-update" instead of "client-driver-location" to avoid client- prefix restrictions
-    if (pusher.pusherInstance) {
-      pusher.pusherInstance.trigger("private-restaurant-default", "driver-location-update", payload);
-
-      // 2. Broadcast to customer tracking maps
-      if (activeOrderIds && Array.isArray(activeOrderIds) && activeOrderIds.length > 0) {
-        activeOrderIds.forEach((orderId) => {
-          pusher.pusherInstance.trigger(`private-order-${orderId}`, "driver-location-update", payload);
-        });
-      }
-    }
-
-    res.status(200).json({ success: true, message: "Location relayed successfully" });
-  } catch (error) {
-    handleError(res, error, 500);
-  }
-};
-
-/**
  * POST: Unassign Driver from Order
  * Body: { orderId }
  */
@@ -804,17 +890,11 @@ exports.completeActiveAssignment = async (req, res) => {
   try {
     const { driverId } = req.params;
 
-    // Find any delivered (returning) assignment for this driver
-    const assignment = await DeliveryAssignment.findOne({
-      driverId,
-      status: "delivered",
-    });
-
-    if (assignment) {
-      assignment.status = "completed";
-      assignment.completedAt = new Date();
-      await assignment.save();
-    }
+    // Find all delivered (returning) assignments for this driver
+    await DeliveryAssignment.updateMany(
+      { driverId, status: "delivered" },
+      { $set: { status: "completed", completedAt: new Date() } }
+    );
 
     const driver = await Driver.findById(driverId);
     if (driver) {

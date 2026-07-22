@@ -32,7 +32,7 @@ exports.createOrder = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, orderType, paymentStatus, date, startDate, endDate, fields, excludeReceptionCompleted, page, limit, search } = req.query;
+    const { status, orderType, paymentStatus, date, startDate, endDate, fields, excludeReceptionCompleted, excludeKitchenCleared, page, limit, search } = req.query;
     const orders = await orderService.getAllOrders({
       status,
       orderType,
@@ -42,6 +42,7 @@ exports.getAllOrders = async (req, res) => {
       endDate,
       fields,
       excludeReceptionCompleted: excludeReceptionCompleted === 'true',
+      excludeKitchenCleared: excludeKitchenCleared === 'true',
       page,
       limit,
       search

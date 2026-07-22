@@ -220,6 +220,10 @@ exports.getAllOrders = async (filters = {}) => {
     }
     if (filters.orderType) query.orderType = filters.orderType;
     if (filters.paymentStatus) query.paymentStatus = filters.paymentStatus;
+    
+    if (filters.excludeKitchenCleared) {
+      query.kitchenCleared = { $ne: true };
+    }
 
     // Date filter: single date or range (Local timezone boundaries)
     let start = null;

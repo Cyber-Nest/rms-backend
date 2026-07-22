@@ -20,7 +20,7 @@ const clearPOSMenuCache = () => {
 
 exports.getAllCategories = async () => {
   try {
-    return await Category.find().sort({ displayOrder: 1 });
+    return await Category.find().sort({ displayOrder: 1 }).lean();
   } catch (error) {
     logger.error(`Menu Service Error: getAllCategories - ${error.message}`);
     throw error;
@@ -75,7 +75,7 @@ exports.deleteCategory = async (id) => {
 
 exports.getAllModifierGroups = async () => {
   try {
-    return await ModifierGroup.find().populate('options.modifierGroups').sort({ createdAt: -1 });
+    return await ModifierGroup.find().populate('options.modifierGroups').sort({ createdAt: -1 }).lean();
   } catch (error) {
     logger.error(`Menu Service Error: getAllModifierGroups - ${error.message}`);
     throw error;
@@ -133,7 +133,8 @@ exports.getAllProducts = async () => {
           path: 'options.modifierGroups'
         }
       })
-      .sort({ name: 1 });
+      .sort({ name: 1 })
+      .lean();
   } catch (error) {
     logger.error(`Menu Service Error: getAllProducts - ${error.message}`);
     throw error;
@@ -143,7 +144,7 @@ exports.getAllProducts = async () => {
 exports.getBranchProductsList = async () => {
   try {
     return await Product.find()
-      .select('_id name price image itemType categoryId productId isActive kitchenLabel')
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock')
       .populate('categoryId', 'name')
       .sort({ name: 1 });
   } catch (error) {
@@ -159,7 +160,7 @@ exports.toggleProductActive = async (id, isActive) => {
       { isActive },
       { returnDocument: 'after', runValidators: true }
     )
-      .select('_id name price image itemType categoryId productId isActive kitchenLabel')
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock')
       .populate('categoryId', 'name');
     
     if (!product) {
@@ -169,6 +170,27 @@ exports.toggleProductActive = async (id, isActive) => {
     return product;
   } catch (error) {
     logger.error(`Menu Service Error: toggleProductActive - ${error.message}`);
+    throw error;
+  }
+};
+
+exports.toggleProductStock = async (id, isOutOfStock) => {
+  try {
+    const product = await Product.findByIdAndUpdate(
+      id,
+      { isOutOfStock },
+      { returnDocument: 'after', runValidators: true }
+    )
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock')
+      .populate('categoryId', 'name');
+    
+    if (!product) {
+      throw new Error('Product not found.');
+    }
+    clearPOSMenuCache();
+    return product;
+  } catch (error) {
+    logger.error(`Menu Service Error: toggleProductStock - ${error.message}`);
     throw error;
   }
 };
@@ -265,6 +287,7 @@ exports.getPOSMenuFeed = async () => {
         isPopular: prod.isPopular,
         kitchenLabel: prod.kitchenLabel || 'chicken',
         itemType: prod.itemType,
+        isOutOfStock: prod.isOutOfStock || false,
         modifierGroups: prod.modifierGroups.map(g => ({
           id: g._id.toHexString(),
           name: g.name,

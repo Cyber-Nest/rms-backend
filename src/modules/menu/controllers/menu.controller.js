@@ -119,6 +119,20 @@ exports.toggleProductActive = async (req, res) => {
   }
 };
 
+exports.toggleProductStock = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isOutOfStock } = req.body;
+    if (isOutOfStock === undefined) {
+      return res.status(400).json({ success: false, message: 'isOutOfStock status is required.' });
+    }
+    const product = await menuService.toggleProductStock(id, isOutOfStock);
+    res.status(200).json({ success: true, data: product });
+  } catch (error) {
+    handleError(res, error, 400);
+  }
+};
+
 exports.createProduct = async (req, res) => {
   try {
     const product = await menuService.createProduct(req.body);
