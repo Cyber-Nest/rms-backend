@@ -27,7 +27,11 @@ const categorySchema = new mongoose.Schema({
   displayOrder: {
     type: Number,
     default: 0,
-  }
+  },
+  disabledBranches: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch'
+  }]
 }, {
   timestamps: true
 });

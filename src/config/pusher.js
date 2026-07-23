@@ -33,8 +33,12 @@ const triggerNewOrder = async (order) => {
   }
 
   try {
-    // Broadcast to global 'orders' channel for V1
-    await pusherInstance.trigger("orders", "new-order", {
+    const channels = ["orders"];
+    if (order.branchId) {
+      channels.push(`orders-${order.branchId.toString()}`);
+    }
+
+    await pusherInstance.trigger(channels, "new-order", {
       _id: order._id,
       orderNumber: order.orderNumber,
       status: order.status,
@@ -43,12 +47,15 @@ const triggerNewOrder = async (order) => {
       orderTiming: order.orderTiming,
       scheduledAt: order.scheduledAt,
       createdAt: order.createdAt,
+      branchId: order.branchId || null,
+      branchName: order.branchName || "",
+      branchCode: order.branchCode || "",
       items: (order.items || []).map(item => ({
         name: item.name,
         quantity: item.quantity
       }))
     });
-    logger.info(`Pusher 'new-order' event triggered for: ${order.orderNumber}`);
+    logger.info(`Pusher 'new-order' event triggered on channels [${channels.join(", ")}] for: ${order.orderNumber}`);
   } catch (error) {
     logger.error(`Failed to trigger Pusher event: ${error.message}`);
   }
@@ -62,6 +69,10 @@ const triggerOrderUpdated = async (order) => {
 
   try {
     const channels = ["orders", `private-order-${order._id.toString()}`];
+    if (order.branchId) {
+      channels.push(`orders-${order.branchId.toString()}`);
+    }
+
     await pusherInstance.trigger(channels, "order-updated", {
       _id: order._id,
       orderNumber: order.orderNumber,
@@ -73,6 +84,9 @@ const triggerOrderUpdated = async (order) => {
       createdAt: order.createdAt,
       kitchenCleared: order.kitchenCleared,
       receptionCompleted: order.receptionCompleted,
+      branchId: order.branchId || null,
+      branchName: order.branchName || "",
+      branchCode: order.branchCode || "",
     });
     logger.info(`Pusher 'order-updated' event triggered on channels [${channels.join(", ")}] for: ${order.orderNumber}`);
   } catch (error) {

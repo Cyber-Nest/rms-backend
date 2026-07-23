@@ -1,6 +1,9 @@
 const mongoose = require("mongoose");
-const { getLocalDateStr, getLocalStartOfDay, getLocalEndOfDay } = require("../../../shared/utils/timezone");
-
+const {
+  getLocalDateStr,
+  getLocalStartOfDay,
+  getLocalEndOfDay,
+} = require("../../../shared/utils/timezone");
 
 const selectedModifierSchema = new mongoose.Schema(
   {
@@ -24,7 +27,11 @@ const orderItemSchema = new mongoose.Schema(
     quantity: { type: Number, required: true, min: 1 },
     totalPrice: { type: Number, required: true },
     note: { type: String, default: "" },
-    kitchenLabel: { type: String, enum: ['chicken', 'pizza'], default: 'chicken' },
+    kitchenLabel: {
+      type: String,
+      enum: ["chicken", "pizza"],
+      default: "chicken",
+    },
   },
   { _id: false },
 );
@@ -37,9 +44,9 @@ const paymentEntrySchema = new mongoose.Schema(
       required: true,
     },
     amount: { type: Number, required: true },
-    personName: { type: String, default: "" }, 
-    cashGiven: { type: Number, default: 0 }, 
-    changeGiven: { type: Number, default: 0 }, 
+    personName: { type: String, default: "" },
+    cashGiven: { type: Number, default: 0 },
+    changeGiven: { type: Number, default: 0 },
     transactionId: { type: String, default: "" },
     cardBrand: { type: String, default: "" },
     cardFunding: { type: String, default: "" },
@@ -61,16 +68,28 @@ const customerSchema = new mongoose.Schema(
   { _id: false },
 );
 
-
 const OrderCounterSchema = new mongoose.Schema({
-  _id: { type: String }, 
+  _id: { type: String },
   count: { type: Number, default: 0 },
 });
 const OrderCounter = mongoose.model("OrderCounter", OrderCounterSchema);
 
-
 const orderSchema = new mongoose.Schema(
   {
+    branchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      default: null,
+      index: true,
+    },
+    branchName: {
+      type: String,
+      default: "Main Branch",
+    },
+    branchCode: {
+      type: String,
+      default: "MAIN",
+    },
     orderNumber: { type: String, index: true },
     orderType: {
       type: String,
@@ -83,12 +102,10 @@ const orderSchema = new mongoose.Schema(
       default: "pos",
     },
 
-    
     items: { type: [orderItemSchema], required: true },
 
-    
     subtotal: { type: Number, required: true },
-    taxRate: { type: Number, default: 0.05 }, 
+    taxRate: { type: Number, default: 0.05 },
     tax: { type: Number, required: true },
     discount: { type: Number, default: 0 },
     discountType: {
@@ -100,7 +117,6 @@ const orderSchema = new mongoose.Schema(
     deliveryFee: { type: Number, default: 0 },
     total: { type: Number, required: true },
 
-    
     paymentTiming: {
       type: String,
       enum: ["pay-now", "pay-later"],
@@ -118,7 +134,6 @@ const orderSchema = new mongoose.Schema(
     },
     payments: { type: [paymentEntrySchema], default: [] },
 
-    
     orderTiming: {
       type: String,
       enum: ["now", "later"],
@@ -127,13 +142,10 @@ const orderSchema = new mongoose.Schema(
     scheduledAt: { type: Date, default: null },
     dueAt: { type: Date, default: null },
 
-    
     customer: { type: customerSchema, default: null },
 
-    
     notes: { type: String, default: "" },
 
-    
     status: {
       type: String,
       enum: ["pending", "preparing", "ready", "completed", "cancelled"],
@@ -160,59 +172,70 @@ const orderSchema = new mongoose.Schema(
   },
 );
 
-
 orderSchema.statics.generateOrderNumber = async function (
   orderType,
   scheduledAt,
+  branchId = null,
 ) {
   const targetDate = scheduledAt ? new Date(scheduledAt) : new Date();
 
   // Get date string in local timezone
   const dateString = getLocalDateStr(targetDate);
+  const counterKey = `${branchId ? branchId.toString() : "main"}_${dateString}`;
 
   // Get local day boundaries as UTC Date objects
   const startOfDay = getLocalStartOfDay(dateString);
   const endOfDay = getLocalEndOfDay(dateString);
 
-  const countToday = await this.countDocuments({
-    createdAt: { $gte: startOfDay, $lte: endOfDay }
-  });
+  const query = { createdAt: { $gte: startOfDay, $lte: endOfDay } };
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  const countToday = await this.countDocuments(query);
 
   if (countToday === 0) {
     await OrderCounter.findOneAndUpdate(
-      { _id: dateString },
+      { _id: counterKey },
       { $set: { count: 0 } },
-      { upsert: true }
+      { upsert: true },
     );
   }
 
   const counter = await OrderCounter.findOneAndUpdate(
-    { _id: dateString },
+    { _id: counterKey },
     { $inc: { count: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { new: true, upsert: true, setDefaultsOnInsert: true },
   );
 
   const orderSeq = counter.count + 100;
   return String(orderSeq);
 };
 
-orderSchema.statics.previewNextOrderNumber = async function (orderType) {
+orderSchema.statics.previewNextOrderNumber = async function (
+  orderType,
+  branchId = null,
+) {
   // Get date string in local timezone
   const dateString = getLocalDateStr();
+  const counterKey = `${branchId ? branchId.toString() : "main"}_${dateString}`;
 
   // Get local day boundaries as UTC Date objects
   const startOfDay = getLocalStartOfDay(dateString);
   const endOfDay = getLocalEndOfDay(dateString);
 
-  const countToday = await this.countDocuments({
-    createdAt: { $gte: startOfDay, $lte: endOfDay }
-  });
+  const query = { createdAt: { $gte: startOfDay, $lte: endOfDay } };
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  const countToday = await this.countDocuments(query);
 
   if (countToday === 0) {
     return "101";
   }
 
-  const counter = await OrderCounter.findOne({ _id: dateString });
+  const counter = await OrderCounter.findOne({ _id: counterKey });
   const currentCount = counter ? counter.count : 0;
   return String(currentCount + 101);
 };
@@ -223,6 +246,8 @@ orderSchema.index({ scheduledAt: 1 }, { sparse: true });
 orderSchema.index({ "customer.phone": 1 }, { sparse: true });
 orderSchema.index({ "customer.email": 1 }, { sparse: true });
 
+orderSchema.index({ branchId: 1, createdAt: -1 });
+orderSchema.index({ branchId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ orderTiming: 1, createdAt: -1 });
 orderSchema.index({ orderTiming: 1, scheduledAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });

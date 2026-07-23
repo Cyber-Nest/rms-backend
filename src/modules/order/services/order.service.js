@@ -97,6 +97,7 @@ exports.createOrder = async (orderData) => {
     const orderNumber = await Order.generateOrderNumber(
       orderData.orderType,
       orderData.orderTiming === "later" ? orderData.scheduledAt : null,
+      orderData.branchId || null,
     );
 
     // If pay-later → paymentStatus = unpaid, no payments array needed
@@ -187,7 +188,7 @@ exports.createOrder = async (orderData) => {
       await paymentDoc.save();
     }
 
-    logger.info(`Order created: ${orderNumber}`);
+    logger.info(`Order created: ${orderNumber} for branch: ${order.branchName || 'Main'}`);
     return order;
   } catch (error) {
     logger.error(`Order Service Error: createOrder - ${error.message}`);
@@ -199,6 +200,10 @@ exports.createOrder = async (orderData) => {
 exports.getAllOrders = async (filters = {}) => {
   try {
     let query = {};
+
+    if (filters.branchId) {
+      query.branchId = filters.branchId;
+    }
 
     if (filters.status) {
       if (typeof filters.status === 'string' && filters.status.includes(',')) {

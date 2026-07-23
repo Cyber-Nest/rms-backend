@@ -60,7 +60,11 @@ const productSchema = new mongoose.Schema({
     type: String,
     unique: true,
     sparse: true,
-  }
+  },
+  disabledBranches: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch'
+  }]
 }, {
   timestamps: true
 });

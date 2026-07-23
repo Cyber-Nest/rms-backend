@@ -250,15 +250,62 @@ exports.deleteProduct = async (id) => {
 
 
 
-exports.getPOSMenuFeed = async () => {
+exports.toggleCategoryBranchVisibility = async (categoryId, branchId, isHidden) => {
   try {
-    if (cachedPOSMenuFeed) {
+    const update = isHidden
+      ? { $addToSet: { disabledBranches: branchId } }
+      : { $pull: { disabledBranches: branchId } };
+
+    const category = await Category.findByIdAndUpdate(categoryId, update, { returnDocument: 'after' });
+    if (!category) {
+      throw new Error('Category not found.');
+    }
+    clearPOSMenuCache();
+    return category;
+  } catch (error) {
+    logger.error(`Menu Service Error: toggleCategoryBranchVisibility - ${error.message}`);
+    throw error;
+  }
+};
+
+exports.toggleProductBranchVisibility = async (productId, branchId, isHidden) => {
+  try {
+    const update = isHidden
+      ? { $addToSet: { disabledBranches: branchId } }
+      : { $pull: { disabledBranches: branchId } };
+
+    const product = await Product.findByIdAndUpdate(productId, update, { returnDocument: 'after' });
+    if (!product) {
+      throw new Error('Product not found.');
+    }
+    clearPOSMenuCache();
+    return product;
+  } catch (error) {
+    logger.error(`Menu Service Error: toggleProductBranchVisibility - ${error.message}`);
+    throw error;
+  }
+};
+
+exports.getPOSMenuFeed = async (branchId = null) => {
+  try {
+    if (cachedPOSMenuFeed && !branchId) {
       return cachedPOSMenuFeed;
     }
 
-    const categories = await Category.find({ isActive: true }).sort({ displayOrder: 1 }).lean();
+    const categoryFilter = { isActive: true };
+    if (branchId) {
+      categoryFilter.disabledBranches = { $ne: branchId };
+    }
+
+    const categories = await Category.find(categoryFilter).sort({ displayOrder: 1 }).lean();
     const activeCategoryIds = categories.map(cat => cat._id);
-    const products = await Product.find({ isActive: true, categoryId: { $in: activeCategoryIds } })
+
+    const productFilter = { isActive: true, categoryId: { $in: activeCategoryIds } };
+    if (branchId) {
+      productFilter.disabledBranches = { $ne: branchId };
+    }
+
+    const products = await Product.find(productFilter)
       .populate({
         path: 'modifierGroups',
         populate: {
@@ -274,6 +321,7 @@ exports.getPOSMenuFeed = async () => {
         slug: cat.slug,
         description: cat.description,
         image: cat.image,
+        disabledBranches: cat.disabledBranches || [],
       })),
       menuItems: products.map(prod => ({
         id: prod._id.toHexString(),
@@ -288,6 +336,7 @@ exports.getPOSMenuFeed = async () => {
         kitchenLabel: prod.kitchenLabel || 'chicken',
         itemType: prod.itemType,
         isOutOfStock: prod.isOutOfStock || false,
+        disabledBranches: prod.disabledBranches || [],
         modifierGroups: prod.modifierGroups.map(g => ({
           id: g._id.toHexString(),
           name: g.name,
@@ -321,7 +370,9 @@ exports.getPOSMenuFeed = async () => {
       }))
     };
 
-    cachedPOSMenuFeed = feed;
+    if (!branchId) {
+      cachedPOSMenuFeed = feed;
+    }
     return feed;
   } catch (error) {
     logger.error(`Menu Service Error: getPOSMenuFeed - ${error.message}`);

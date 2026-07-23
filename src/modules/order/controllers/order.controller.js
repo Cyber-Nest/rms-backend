@@ -32,8 +32,9 @@ exports.createOrder = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const { status, orderType, paymentStatus, date, startDate, endDate, fields, excludeReceptionCompleted, excludeKitchenCleared, page, limit, search } = req.query;
+    const { status, orderType, paymentStatus, date, startDate, endDate, fields, excludeReceptionCompleted, excludeKitchenCleared, page, limit, search, branchId } = req.query;
     const orders = await orderService.getAllOrders({
+      branchId,
       status,
       orderType,
       paymentStatus,
@@ -216,11 +217,11 @@ exports.cancelOrder = async (req, res) => {
 
 exports.getNextOrderNumber = async (req, res) => {
   try {
-    const { type } = req.query;
+    const { type, branchId } = req.query;
     if (!type) {
       return res.status(400).json({ success: false, message: 'type query parameter is required.' });
     }
-    const nextNumber = await orderService.getNextOrderNumber(type);
+    const nextNumber = await orderService.getNextOrderNumber(type, branchId || null);
     res.status(200).json({ success: true, data: nextNumber });
   } catch (error) {
     handleError(res, error, 500);

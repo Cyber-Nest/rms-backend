@@ -87,6 +87,7 @@ app.use(
 );
 
 
+const { initCompanyModule } = require("./modules/company");
 const { initMenuModule } = require("./modules/menu");
 const { initOrderModule } = require("./modules/order");
 const { initPromoModule } = require("./modules/promo");
@@ -94,6 +95,7 @@ const { initExpenseModule } = require("./modules/expense");
 const { initPaymentModule } = require("./modules/payment");
 const { initDeliveryModule } = require("./modules/delivery");
 
+initCompanyModule(app);
 initMenuModule(app);
 initOrderModule(app);
 initPromoModule(app);

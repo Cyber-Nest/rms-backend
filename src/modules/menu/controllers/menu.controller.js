@@ -165,10 +165,39 @@ exports.deleteProduct = async (req, res) => {
 
 exports.getPOSMenu = async (req, res) => {
   try {
-    const feedData = await menuService.getPOSMenuFeed();
+    const { branchId } = req.query;
+    const feedData = await menuService.getPOSMenuFeed(branchId || null);
     res.status(200).json({ success: true, data: feedData });
   } catch (error) {
     handleError(res, error, 500);
+  }
+};
+
+exports.toggleCategoryBranch = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { branchId, isHidden } = req.body;
+    if (!branchId || isHidden === undefined) {
+      return res.status(400).json({ success: false, message: 'branchId and isHidden flag are required.' });
+    }
+    const category = await menuService.toggleCategoryBranchVisibility(id, branchId, isHidden);
+    res.status(200).json({ success: true, data: category });
+  } catch (error) {
+    handleError(res, error, 400);
+  }
+};
+
+exports.toggleProductBranch = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { branchId, isHidden } = req.body;
+    if (!branchId || isHidden === undefined) {
+      return res.status(400).json({ success: false, message: 'branchId and isHidden flag are required.' });
+    }
+    const product = await menuService.toggleProductBranchVisibility(id, branchId, isHidden);
+    res.status(200).json({ success: true, data: product });
+  } catch (error) {
+    handleError(res, error, 400);
   }
 };
 
