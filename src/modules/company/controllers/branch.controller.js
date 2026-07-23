@@ -152,3 +152,45 @@ exports.changePassword = async (req, res) => {
     });
   }
 };
+
+exports.getMe = async (req, res) => {
+  try {
+    const branchId = req.branch?.branchId || req.branch?._id;
+    if (!branchId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: Branch ID missing in token",
+      });
+    }
+
+    const branch = await branchService.getBranchById(branchId);
+    if (!branch.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: "This branch is inactive",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: branch._id,
+        name: branch.name,
+        code: branch.code,
+        email: branch.email,
+        address: branch.address,
+        city: branch.city,
+        phone: branch.phone,
+        lat: branch.lat,
+        lng: branch.lng,
+        isActive: branch.isActive,
+      },
+    });
+  } catch (error) {
+    logger.error(`Error fetching logged in branch profile: ${error.message}`);
+    res.status(401).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

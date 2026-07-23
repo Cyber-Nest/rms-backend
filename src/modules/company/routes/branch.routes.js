@@ -1,7 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const branchController = require("../controllers/branch.controller");
+const protectBranch = require("../../../shared/middleware/protectBranch");
 
+router.get("/branches/me", protectBranch, branchController.getMe);
 router.post("/branches", branchController.createBranch);
 router.get("/branches", branchController.getAllBranches);
 router.get("/branches/:id", branchController.getBranchById);
