@@ -194,3 +194,31 @@ exports.getMe = async (req, res) => {
     });
   }
 };
+
+exports.getBranchSettings = async (req, res) => {
+  try {
+    const branchId = req.query.branchId || req.activeBranchId || req.branch?.branchId || req.branch?._id;
+    if (!branchId) {
+      return res.status(400).json({ success: false, message: "Branch ID is required" });
+    }
+    const settings = await branchService.getBranchSettings(branchId);
+    res.status(200).json({ success: true, data: settings });
+  } catch (error) {
+    logger.error(`Error fetching branch settings: ${error.message}`);
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+exports.updateBranchSettings = async (req, res) => {
+  try {
+    const branchId = req.body.branchId || req.activeBranchId || req.branch?.branchId || req.branch?._id;
+    if (!branchId) {
+      return res.status(400).json({ success: false, message: "Branch ID is required" });
+    }
+    const updatedSettings = await branchService.updateBranchSettings(branchId, req.body);
+    res.status(200).json({ success: true, message: "Settings updated successfully", data: updatedSettings });
+  } catch (error) {
+    logger.error(`Error updating branch settings: ${error.message}`);
+    res.status(400).json({ success: false, message: error.message });
+  }
+};

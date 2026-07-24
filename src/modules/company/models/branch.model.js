@@ -54,6 +54,61 @@ const branchSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    settings: {
+      mainSettings: {
+        timezone: { type: String, default: 'Mountain Standard Time (MST) - America/Edmonton' },
+        defaultTimeMinutes: { type: Number, default: 15 },
+        reportingStartTime: { type: String, default: '12:00 AM' },
+        reportingEndTime: { type: String, default: '12:00 AM' },
+        latitude: { type: Number, default: 51.05643 },
+        longitude: { type: Number, default: -113.37832 },
+        commission: { type: Number, default: 0 },
+        gstNumber: { type: String, default: '123456789' },
+      },
+      taxFeesSettings: {
+        deliveryFee: { type: Number, default: 4.99 },
+        gstTaxRate: { type: Number, default: 5 },
+        pstTaxRate: { type: Number, default: 0 },
+        hstTaxRate: { type: Number, default: 0 },
+      },
+      storeTimings: [{
+        day: { type: String },
+        startTime: { type: String, default: '10:00 AM' },
+        endTime: { type: String, default: '09:00 PM' },
+        isHoliday: { type: String, default: 'No' },
+      }],
+      storeTimingsUpdates: [{
+        id: { type: String },
+        startDate: { type: String },
+        endDate: { type: String },
+        startTime: { type: String },
+        endTime: { type: String },
+        status: { type: Boolean, default: true },
+        createdAt: { type: String },
+      }],
+      holidays: [{
+        id: { type: String },
+        startDate: { type: String },
+        endDate: { type: String },
+        status: { type: Boolean, default: true },
+        createdAt: { type: String },
+      }],
+      terminals: [{
+        id: { type: String },
+        realDevices: { type: String, default: 'No' },
+        terminalName: { type: String },
+        terminalId: { type: String },
+        apiToken: { type: String },
+        storeId: { type: String },
+        createdDate: { type: String },
+      }],
+      tills: [{
+        id: { type: String },
+        tillNo: { type: String },
+        tillName: { type: String },
+        createdDate: { type: String },
+      }],
+    },
   },
   {
     timestamps: true,
@@ -64,14 +119,13 @@ branchSchema.index({ code: 1 }, { unique: true });
 branchSchema.index({ email: 1 }, { unique: true });
 
 // Hash password before saving if modified
-branchSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+branchSchema.pre("save", async function () {
+  if (!this.isModified("password")) return;
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
-    next();
   } catch (err) {
-    next(err);
+    throw err;
   }
 });
 

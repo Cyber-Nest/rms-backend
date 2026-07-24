@@ -25,19 +25,24 @@ exports.generateReceiptPdf = async (order, res) => {
           if (b.address) branchInfo.address = b.address;
           if (b.city) branchInfo.city = b.city;
           if (b.phone) branchInfo.phone = b.phone;
+          if (b.settings?.mainSettings?.gstNumber) {
+            branchInfo.gst = b.settings.mainSettings.gstNumber;
+          }
         }
       } catch (err) {
-        logger.warn(`Could not fetch branch info for receipt PDF: ${err.message}`);
+        logger.warn(
+          `Could not fetch branch info for receipt PDF: ${err.message}`,
+        );
       }
     }
 
-    // 80mm width 
+    // 80mm width
     const doc = new PDFDocument({
       size: [226, 800],
       margin: 10,
     });
 
-    // Pipe PDF 
+    // Pipe PDF
     doc.pipe(res);
 
     const printableWidth = 206; // 226 - 2*10 margin
@@ -298,7 +303,9 @@ exports.generateReceiptPdf = async (order, res) => {
 
     if (deliveryFee > 0) {
       rowY = doc.y;
-      doc.font("Helvetica").text("Delivery Fee :", startX, rowY, { width: 100 });
+      doc
+        .font("Helvetica")
+        .text("Delivery Fee :", startX, rowY, { width: 100 });
       doc
         .font("Helvetica-Bold")
         .text(`$${deliveryFee.toFixed(2)}`, startX + 100, rowY, {
@@ -332,7 +339,9 @@ exports.generateReceiptPdf = async (order, res) => {
     doc.moveDown(0.4);
 
     // Check payment history or payment method
-    let isAccountPay = ["doordash", "skip", "ubereats"].includes(order.orderSource);
+    let isAccountPay = ["doordash", "skip", "ubereats"].includes(
+      order.orderSource,
+    );
     let isCardPayment = false;
     let cardInfo = {
       acct: "CARD",
@@ -343,7 +352,10 @@ exports.generateReceiptPdf = async (order, res) => {
     };
     let cashInfo = { cashGiven: total, changeGiven: 0 };
 
-    if (!isAccountPay && (order.orderSource === "online" || order.paymentMethod === "stripe")) {
+    if (
+      !isAccountPay &&
+      (order.orderSource === "online" || order.paymentMethod === "stripe")
+    ) {
       isCardPayment = true;
       cardInfo.acct = "STRIPE CARD";
       cardInfo.aid = "ONLINE_STRIPE";
@@ -356,14 +368,26 @@ exports.generateReceiptPdf = async (order, res) => {
     ) {
       const p = order.payments[0];
       if (
-        !isAccountPay && ["card", "interac", "debit", "credit"].includes(p.method?.toLowerCase())
+        !isAccountPay &&
+        ["card", "interac", "debit", "credit"].includes(p.method?.toLowerCase())
       ) {
         isCardPayment = true;
-        cardInfo.acct = p.cardBrand ? p.cardBrand.toUpperCase() : (order.orderSource === "online" ? "STRIPE CARD" : "INTERAC");
+        cardInfo.acct = p.cardBrand
+          ? p.cardBrand.toUpperCase()
+          : order.orderSource === "online"
+            ? "STRIPE CARD"
+            : "INTERAC";
         cardInfo.cardNum = p.cardLast4 ? `************${p.cardLast4}` : "N/A";
         cardInfo.type = p.cardFunding ? p.cardFunding.toUpperCase() : "CARD";
-        cardInfo.transNum = p.transactionId ? p.transactionId : (order.paymentIntentId || "N/A");
-        cardInfo.aid = order.orderSource === "online" ? "ONLINE_STRIPE" : (p.cardBrand ? "CARD_PAYMENT" : "0THB2O87P7ZOBIK");
+        cardInfo.transNum = p.transactionId
+          ? p.transactionId
+          : order.paymentIntentId || "N/A";
+        cardInfo.aid =
+          order.orderSource === "online"
+            ? "ONLINE_STRIPE"
+            : p.cardBrand
+              ? "CARD_PAYMENT"
+              : "0THB2O87P7ZOBIK";
       } else if (p.method?.toLowerCase() === "cash") {
         isCardPayment = false;
         cashInfo.cashGiven = p.cashGiven || total;
@@ -400,7 +424,14 @@ exports.generateReceiptPdf = async (order, res) => {
       doc.text("PLATFORM :", startX, rowY);
       doc
         .font("Helvetica-Bold")
-        .text(order.orderSource === "online" ? "WEBSITE" : order.orderSource.toUpperCase(), startX + 80, rowY, { width: 126, align: "right" });
+        .text(
+          order.orderSource === "online"
+            ? "WEBSITE"
+            : order.orderSource.toUpperCase(),
+          startX + 80,
+          rowY,
+          { width: 126, align: "right" },
+        );
       doc.font("Helvetica").moveDown(0.2);
     } else if (isCardPayment) {
       rowY = doc.y;
@@ -411,12 +442,10 @@ exports.generateReceiptPdf = async (order, res) => {
       doc.font("Helvetica").moveDown(0.2);
       rowY = doc.y;
       doc.text("CARD NUMBER :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(cardInfo.cardNum, startX + 80, rowY, {
-          width: 126,
-          align: "right",
-        });
+      doc.font("Helvetica-Bold").text(cardInfo.cardNum, startX + 80, rowY, {
+        width: 126,
+        align: "right",
+      });
       doc.font("Helvetica").moveDown(0.2);
       rowY = doc.y;
       doc.text("Type :", startX, rowY);
@@ -426,12 +455,10 @@ exports.generateReceiptPdf = async (order, res) => {
       doc.font("Helvetica").moveDown(0.2);
       rowY = doc.y;
       doc.text("TRANS # :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(cardInfo.transNum, startX + 80, rowY, {
-          width: 126,
-          align: "right",
-        });
+      doc.font("Helvetica-Bold").text(cardInfo.transNum, startX + 80, rowY, {
+        width: 126,
+        align: "right",
+      });
       doc.font("Helvetica").moveDown(0.2);
       rowY = doc.y;
       doc.text("AID :", startX, rowY);
@@ -516,7 +543,12 @@ exports.generateReceiptPdf = async (order, res) => {
   }
 };
 
-exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId = null) => {
+exports.generateSalesSummaryReceiptPdf = async (
+  summary,
+  dateStr,
+  res,
+  branchId = null,
+) => {
   try {
     let branchInfo = {
       name: summary.branchName || "Chicken Delight",
@@ -542,7 +574,9 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
           if (b.phone) branchInfo.phone = b.phone;
         }
       } catch (err) {
-        logger.warn(`Could not fetch branch info for sales summary receipt: ${err.message}`);
+        logger.warn(
+          `Could not fetch branch info for sales summary receipt: ${err.message}`,
+        );
       }
     }
 
@@ -564,7 +598,20 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
       try {
         const d = new Date(dateVal);
         const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const months = [
+          "Jan",
+          "Feb",
+          "Mar",
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep",
+          "Oct",
+          "Nov",
+          "Dec",
+        ];
         return `${days[d.getDay()]}, ${months[d.getMonth()]} ${String(d.getDate()).padStart(2, "0")}, ${d.getFullYear()}`;
       } catch {
         return dateVal;
@@ -654,14 +701,22 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
     const drawRow = (left, right, isBold = false, indent = 0) => {
       const rowY = doc.y;
       doc.font(isBold ? "Helvetica-Bold" : "Helvetica").fontSize(8);
-      doc.text(left, startX + indent, rowY, { width: printableWidth - 60 - indent });
-      doc.text(right, startX + printableWidth - 60, rowY, { width: 60, align: "right" });
+      doc.text(left, startX + indent, rowY, {
+        width: printableWidth - 60 - indent,
+      });
+      doc.text(right, startX + printableWidth - 60, rowY, {
+        width: 60,
+        align: "right",
+      });
       doc.moveDown(0.2);
     };
 
     // Section 1: Sales By Category
     drawDivider();
-    doc.font("Helvetica-Bold").fontSize(8.5).text("SALES BY CATEGORY", startX, doc.y);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8.5)
+      .text("SALES BY CATEGORY", startX, doc.y);
     doc.moveDown(0.2);
     drawDivider();
 
@@ -670,13 +725,20 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
         drawRow(cat.name || "Uncategorized", fmt(cat.total));
       });
       doc.moveDown(0.2);
-      drawRow("ALL CATEGORY TOTAL", fmt(summary.financials?.allCategoryTotal || 0), true);
+      drawRow(
+        "ALL CATEGORY TOTAL",
+        fmt(summary.financials?.allCategoryTotal || 0),
+        true,
+      );
     }
     doc.moveDown(0.4);
 
     // Section 2: Sales Summary Accounting
     drawDivider();
-    doc.font("Helvetica-Bold").fontSize(8.5).text("SALES ACCOUNTING", startX, doc.y);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8.5)
+      .text("SALES ACCOUNTING", startX, doc.y);
     doc.moveDown(0.2);
     drawDivider();
 
@@ -695,7 +757,10 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
 
     // Section 3: Sales Received (Payment Type)
     drawDivider();
-    doc.font("Helvetica-Bold").fontSize(8.5).text("SALES RECEIVED", startX, doc.y);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8.5)
+      .text("SALES RECEIVED", startX, doc.y);
     doc.moveDown(0.2);
     drawDivider();
 
@@ -730,7 +795,11 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
     doc.moveDown(0.4);
 
     // Section 5: Expenses
-    if (summary.expense && Array.isArray(summary.expense) && summary.expense.length > 0) {
+    if (
+      summary.expense &&
+      Array.isArray(summary.expense) &&
+      summary.expense.length > 0
+    ) {
       drawDivider();
       doc.font("Helvetica-Bold").fontSize(8.5).text("EXPENSES", startX, doc.y);
       doc.moveDown(0.2);
@@ -742,13 +811,20 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
         drawRow(`${emp} (${mode})`, fmt(exp.total));
         if (exp.pst || exp.gst || exp.hst) {
           doc.font("Helvetica").fontSize(7).fillColor("#444444");
-          doc.text(`   PST: ${fmt(exp.pst)} | GST: ${fmt(exp.gst)} | HST: ${fmt(exp.hst)}`, startX, doc.y);
+          doc.text(
+            `   PST: ${fmt(exp.pst)} | GST: ${fmt(exp.gst)} | HST: ${fmt(exp.hst)}`,
+            startX,
+            doc.y,
+          );
           doc.fillColor("#000000");
           doc.moveDown(0.15);
         }
       });
       doc.moveDown(0.2);
-      const expenseTotal = summary.expense.reduce((sum, e) => sum + (e.total || 0), 0);
+      const expenseTotal = summary.expense.reduce(
+        (sum, e) => sum + (e.total || 0),
+        0,
+      );
       drawRow("TOTAL EXPENSES :", fmt(expenseTotal), true);
       doc.moveDown(0.4);
     }
@@ -773,9 +849,16 @@ exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId 
 
     doc.end();
   } catch (error) {
-    logger.error(`Error generating sales summary PDF receipt: ${error.message}`);
+    logger.error(
+      `Error generating sales summary PDF receipt: ${error.message}`,
+    );
     if (!res.headersSent) {
-      res.status(500).json({ success: false, message: "Failed to generate sales summary PDF" });
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: "Failed to generate sales summary PDF",
+        });
     }
   }
 };

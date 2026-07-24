@@ -132,3 +132,58 @@ exports.changeBranchPassword = async (branchId, currentPassword, newPassword) =>
   await branch.save();
   return { message: "Password updated successfully" };
 };
+
+exports.getBranchSettings = async (branchId) => {
+  const branch = await Branch.findById(branchId).select("settings name code").lean();
+  if (!branch) {
+    throw new Error("Branch not found");
+  }
+  return branch.settings || {};
+};
+
+exports.updateBranchSettings = async (branchId, settingsData) => {
+  const $set = {};
+
+  if (settingsData.mainSettings) {
+    const ms = settingsData.mainSettings;
+    // Cast numeric fields explicitly so they save correctly
+    if (ms.defaultTimeMinutes !== undefined) ms.defaultTimeMinutes = Number(ms.defaultTimeMinutes) || 15;
+    if (ms.defaultTime !== undefined) ms.defaultTimeMinutes = Number(ms.defaultTimeMinutes || ms.defaultTime) || 15;
+    if (ms.latitude !== undefined) ms.latitude = Number(ms.latitude) || 0;
+    if (ms.longitude !== undefined) ms.longitude = Number(ms.longitude) || 0;
+    if (ms.commission !== undefined) ms.commission = Number(ms.commission) || 0;
+    $set['settings.mainSettings'] = ms;
+  }
+  if (settingsData.taxFeesSettings) {
+    const tf = settingsData.taxFeesSettings;
+    if (tf.deliveryFee !== undefined) tf.deliveryFee = Number(tf.deliveryFee) || 0;
+    if (tf.gstTaxRate !== undefined) tf.gstTaxRate = Number(tf.gstTaxRate) || 0;
+    if (tf.pstTaxRate !== undefined) tf.pstTaxRate = Number(tf.pstTaxRate) || 0;
+    if (tf.hstTaxRate !== undefined) tf.hstTaxRate = Number(tf.hstTaxRate) || 0;
+    $set['settings.taxFeesSettings'] = tf;
+  }
+  if (settingsData.storeTimings) {
+    $set['settings.storeTimings'] = settingsData.storeTimings;
+  }
+  if (settingsData.storeTimingsUpdates) {
+    $set['settings.storeTimingsUpdates'] = settingsData.storeTimingsUpdates;
+  }
+  if (settingsData.holidays) {
+    $set['settings.holidays'] = settingsData.holidays;
+  }
+  if (settingsData.terminals) {
+    $set['settings.terminals'] = settingsData.terminals;
+  }
+  if (settingsData.tills) {
+    $set['settings.tills'] = settingsData.tills;
+  }
+
+  const updated = await Branch.findByIdAndUpdate(
+    branchId,
+    { $set },
+    { new: true, runValidators: false }
+  ).lean();
+
+  if (!updated) throw new Error('Branch not found');
+  return updated.settings || {};
+};

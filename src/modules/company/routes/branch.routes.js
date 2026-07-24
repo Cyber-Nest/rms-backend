@@ -4,6 +4,8 @@ const branchController = require("../controllers/branch.controller");
 const protectBranch = require("../../../shared/middleware/protectBranch");
 
 router.get("/branches/me", protectBranch, branchController.getMe);
+router.get("/branches/settings", branchController.getBranchSettings);
+router.patch("/branches/settings", branchController.updateBranchSettings);
 router.post("/branches", branchController.createBranch);
 router.get("/branches", branchController.getAllBranches);
 router.get("/branches/:id", branchController.getBranchById);

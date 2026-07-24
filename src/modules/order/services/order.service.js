@@ -144,7 +144,20 @@ exports.createOrder = async (orderData) => {
       if (orderData.orderTiming === "later" && orderData.scheduledAt) {
         dueAt = new Date(orderData.scheduledAt);
       } else {
-        dueAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins default
+        let prepTimeMinutes = 15;
+        try {
+          let b = null;
+          if (orderData.branchId) {
+            b = await Branch.findById(orderData.branchId).select("settings").lean();
+          }
+          if (!b) {
+            b = await Branch.findOne().select("settings").lean();
+          }
+          if (b?.settings?.mainSettings?.defaultTimeMinutes) {
+            prepTimeMinutes = Number(b.settings.mainSettings.defaultTimeMinutes) || 15;
+          }
+        } catch (e) {}
+        dueAt = new Date(Date.now() + prepTimeMinutes * 60 * 1000);
       }
     }
 
