@@ -1,0 +1,766 @@
+# V2 — Multi-Restaurant Architecture (Company → Branch Hierarchy)
+
+## Problem Statement
+
+V1 is a **single-restaurant** system — all orders, products, expenses go into shared MongoDB collections with no tenant isolation. V2 needs to support:
+
+```
+Super Admin → Creates Companies (e.g., "Chicken Delight")
+    Company → Creates Branches (individual restaurants)
+        Branch → Full restaurant operations (V1 feature set + new roles)
+```
+
+## Current Architecture (V1)
+
+```mermaid
+graph TB
+    subgraph "Frontends"
+        SA["super-admin<br/>(Next.js :3002)"]
+        BR["branch<br/>(Next.js :3000)"]
+        UF["user-frontend<br/>(Next.js :3001)"]
+        DW["driver-web<br/>(Next.js :3003)"]
+    end
+
+    subgraph "Backend (Express :5000)"
+        API["api/index.js → app.js"]
+        MENU["Menu Module"]
+        ORDER["Order Module"]
+        PROMO["Promo Module"]
+        EXPENSE["Expense Module"]
+        PAYMENT["Payment Module"]
+        DELIVERY["Delivery Module"]
+    end
+
+    subgraph "External"
+        MONGO["MongoDB Atlas"]
+        CLOUD["Cloudinary"]
+        STRIPE["Stripe"]
+        PUSHER["Pusher"]
+    end
+
+    SA --> API
+    BR --> API
+    UF --> API
+    DW --> API
+    API --> MENU & ORDER & PROMO & EXPENSE & PAYMENT & DELIVERY
+    ORDER --> MONGO & STRIPE & PUSHER
+    MENU --> MONGO & CLOUD
+```
+
+### Current Models (No Tenant Isolation)
+| Model | File | Has branchId? |
+|-------|------|:---:|
+| Order | [order.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/order/models/order.model.js) | ❌ |
+| OrderCounter | [order.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/order/models/order.model.js) | ❌ |
+| Deposit | [deposit.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/order/models/deposit.model.js) | ❌ |
+| Product | [product.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/menu/models/product.model.js) | ❌ |
+| Category | [category.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/menu/models/category.model.js) | ❌ |
+| ModifierGroup | [modifier.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/menu/models/modifier.model.js) | ❌ |
+| Expense | [expense.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/expense/models/expense.model.js) | ❌ |
+| Payment | [payment.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/payment/models/payment.model.js) | ❌ |
+| Promo | [promo.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/promo/models/promo.model.js) | ❌ |
+| Driver | [Driver.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/delivery/models/Driver.model.js) | ✅ `restaurantId` (String, default "default") |
+| Vehicle | [Vehicle.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/delivery/models/Vehicle.model.js) | ✅ `restaurantId` |
+| DeliveryAssignment | [DeliveryAssignment.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/delivery/models/DeliveryAssignment.model.js) | ✅ `restaurantId` |
+
+### Current Frontend Apps
+| App | Tech | Port | Pages/Features |
+|-----|------|------|----------------|
+| **branch** | Next.js + Tailwind | :3000 | POS, Kitchen, Reception, Orders, Delivery, Menu, Customers, Vehicles, Settings (50+ components) |
+| **super-admin** | Next.js + Tailwind | :3002 | Admin layout + Menu management only |
+| **user-frontend** | Next.js + Tailwind | :3001 | Customer ordering page |
+| **driver-web** | Next.js + Tailwind | :3003 | Driver login + delivery dashboard |
+
+---
+
+## V2 Target Architecture
+
+```mermaid
+graph TB
+    subgraph "Super Admin Level"
+        SUPER["🔑 Super Admin Panel<br/>(Platform Owner)"]
+    end
+
+    subgraph "Company Level"
+        CO["🏢 Company Admin Panel<br/>(Company Owner/Admin)"]
+    end
+
+    subgraph "Branch Level"
+        BR_ADMIN["👔 Branch Admin"]
+        BR_MGR["📋 Branch Manager"]
+        BR_EMP["👨‍🍳 Branch Employee/Cashier"]
+        BR_DRV["🚗 Branch Driver"]
+    end
+
+    subgraph "Customer Level"
+        CUST["🛒 Customer Frontend"]
+    end
+
+    SUPER -->|"Creates Companies"| CO
+    CO -->|"Creates Branches"| BR_ADMIN
+    BR_ADMIN --> BR_MGR
+    BR_MGR --> BR_EMP & BR_DRV
+    CUST -->|"Orders from Branch"| BR_EMP
+```
+
+### New Hierarchy
+
+```
+Super Admin (Platform Level)
+├── Can create/manage Companies
+├── Can view all Companies, Branches, Users
+├── Platform-wide analytics & settings
+│
+Company (e.g., "Chicken Delight")
+├── Company Admin (Owner)
+│   ├── Create/manage Branches
+│   ├── Company-wide settings (tax rate, currency, timezone)
+│   ├── Company-wide analytics (all branches combined)
+│   ├── Manage company-level promos
+│   └── Manage company-level menu templates (optional)
+│
+Branch (e.g., "Chicken Delight - Downtown")
+├── Branch Admin
+│   ├── Full control of this branch
+│   ├── Menu management (products, categories, modifiers)
+│   ├── Staff management (assign roles)
+│   └── Branch settings
+├── Manager
+│   ├── Orders dashboard, sales summary, reports
+│   ├── Expense management
+│   ├── View employees, manage shifts
+│   └── Limited settings access
+├── Employee / Cashier
+│   ├── POS terminal (take orders)
+│   ├── Kitchen display
+│   └── Reception display
+└── Driver
+    ├── View assigned deliveries
+    ├── Update delivery status
+    └── GPS tracking
+```
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> ### Key Design Decisions Needing Your Input
+>
+> 1. **Company Admin vs Branch Admin roles** — Kya Company Admin aur Branch Admin alag login honge ya ek hi admin dono level manage karega?
+>
+> 2. **Menu sharing between branches** — Kya ek company ke saari branches ka menu same hoga (company-level menu), ya har branch ka apna alag menu hoga?
+>
+> 3. **Promo codes scope** — Promos company-wide honge ya branch-specific?
+>
+> 4. **User-frontend (customer ordering)** — Customer ko branch select karna padega ya company select karke phir branch? (e.g., "Chicken Delight → Downtown Branch")
+>
+> 5. **Super Admin panel** — Abhi super-admin me sirf menu management hai. V2 me super-admin ka kya scope hoga? Sirf company create/manage, ya billing/subscription bhi?
+
+> [!WARNING]
+> ### Breaking Changes
+> - **Every existing model** gets a new `branchId` + `companyId` field — existing V1 data will need migration
+> - **Authentication is mandatory** — No more open API endpoints. Every request needs a JWT token
+> - **All API routes change** to include tenant context (e.g., `/api/v2/branches/:branchId/orders`)
+> - **Pusher channels** become branch-scoped (e.g., `orders-{branchId}` instead of `orders`)
+
+---
+
+## Open Questions
+
+> [!IMPORTANT]
+> 1. **Employee ko kaise add karenge?** — Branch Admin manually create karega (username/password) ya invite link bhejega (email)?
+>
+> 2. **Cashier aur Employee me kya difference hoga?** — Dono POS use karenge ya Cashier sirf payment handle karega?
+>
+> 3. **Driver login** — Abhi driver-web me driverId + password hai. V2 me bhi same rahega ya email-based login?
+>
+> 4. **Company Admin analytics** — Company Admin ko saari branches ka combined dashboard dikhega ya branch-by-branch?
+>
+> 5. **Subscription/billing** — Kya Super Admin companies se payment lega? (SaaS model) ya ye internal tool hai?
+>
+> 6. **Deployment strategy** — Abhi Vercel pe deploy hai. V2 ke liye Railway/Render pe move karna padega (background jobs ke liye). Tu confirm kar?
+
+---
+
+## Proposed Changes
+
+### Phase 1: Authentication & User System (Foundation)
+
+---
+
+#### Backend — New Auth Module
+
+##### [NEW] [user.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/auth/models/user.model.js)
+
+```javascript
+// User model with role-based access
+const userSchema = {
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true }, // bcrypt hashed
+  name: { type: String, required: true },
+  phone: { type: String, default: "" },
+  
+  role: {
+    type: String,
+    enum: ["super-admin", "company-admin", "branch-admin", "manager", "employee", "cashier", "driver"],
+    required: true,
+  },
+  
+  companyId: { type: ObjectId, ref: "Company", default: null },  // null for super-admin
+  branchId: { type: ObjectId, ref: "Branch", default: null },    // null for super-admin & company-admin
+  branchIds: [{ type: ObjectId, ref: "Branch" }],                // for company-admin (access to multiple branches)
+  
+  isActive: { type: Boolean, default: true },
+  lastLoginAt: { type: Date, default: null },
+  
+  // Driver-specific fields (replaces current Driver model's auth fields)
+  driverProfile: {
+    color: { type: String, default: "#3B82F6" },
+    status: { type: String, enum: ["available", "on-delivery", "returning", "offline"], default: "offline" },
+    assignedVehicleId: { type: ObjectId, ref: "Vehicle", default: null },
+  }
+};
+```
+
+##### [NEW] [auth.service.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/auth/services/auth.service.js)
+
+- `register(email, password, name, role, companyId?, branchId?)` — Create user + hash password
+- `login(email, password)` → JWT token (contains `userId, role, companyId, branchId`)
+- `refreshToken(token)` → New JWT
+- `changePassword(userId, oldPassword, newPassword)`
+- `forgotPassword(email)` → Send reset email (using existing nodemailer dep)
+
+##### [NEW] [auth.middleware.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/shared/middleware/auth.middleware.js)
+
+```javascript
+// Middleware functions:
+authenticate        // Verify JWT token, attach req.user
+requireRole(...roles) // Check if user has required role
+requireBranch        // Ensure branchId in token matches request
+requireCompany       // Ensure companyId in token matches request
+```
+
+##### [NEW] [auth.controller.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/auth/controllers/auth.controller.js)
+##### [NEW] [auth.routes.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/auth/routes/auth.routes.js)
+##### [NEW] [auth/index.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/auth/index.js)
+
+**API Endpoints:**
+```
+POST /api/v2/auth/login
+POST /api/v2/auth/register        (Super Admin only)
+POST /api/v2/auth/refresh-token
+POST /api/v2/auth/change-password
+POST /api/v2/auth/forgot-password
+GET  /api/v2/auth/me               (Get current user profile)
+```
+
+**New npm packages needed:**
+- `jsonwebtoken` — JWT token generation/verification
+- `bcrypt` — Password hashing
+- `joi` or `zod` — Input validation
+
+---
+
+### Phase 2: Company & Branch Models
+
+---
+
+##### [NEW] [company.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/company/models/company.model.js)
+
+```javascript
+const companySchema = {
+  name: { type: String, required: true, trim: true },      // "Chicken Delight"
+  slug: { type: String, required: true, unique: true },     // "chicken-delight"
+  logo: { type: String, default: "" },                      // Cloudinary URL
+  
+  owner: { type: ObjectId, ref: "User", required: true },   // Company admin userId
+  
+  // Company-wide settings
+  settings: {
+    taxRate: { type: Number, default: 0.05 },
+    currency: { type: String, default: "CAD" },
+    timezone: { type: String, default: "America/Toronto" },
+    receiptHeader: { type: String, default: "" },
+    receiptFooter: { type: String, default: "" },
+  },
+  
+  // Contact
+  email: { type: String, default: "" },
+  phone: { type: String, default: "" },
+  website: { type: String, default: "" },
+  
+  isActive: { type: Boolean, default: true },
+  plan: { type: String, enum: ["free", "basic", "pro", "enterprise"], default: "free" },
+};
+```
+
+##### [NEW] [branch.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/company/models/branch.model.js)
+
+```javascript
+const branchSchema = {
+  companyId: { type: ObjectId, ref: "Company", required: true, index: true },
+  
+  name: { type: String, required: true, trim: true },       // "Downtown Branch"
+  slug: { type: String, required: true },                    // "downtown"
+  code: { type: String, required: true },                    // "DT01" - short branch code
+  
+  address: { type: String, default: "" },
+  city: { type: String, default: "" },
+  postalCode: { type: String, default: "" },
+  phone: { type: String, default: "" },
+  email: { type: String, default: "" },
+  
+  location: {
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
+  },
+  
+  // Branch-specific settings (overrides company settings if set)
+  settings: {
+    taxRate: { type: Number, default: null },        // null = use company default
+    timezone: { type: String, default: null },
+    orderTypes: [String],                            // ["takeout", "dine-in", "delivery", "drive-through"]
+    kitchenLabels: [String],                         // ["chicken", "pizza"] - customizable per branch
+    operatingHours: {
+      mon: { open: String, close: String },
+      tue: { open: String, close: String },
+      // ... etc
+    },
+    deliveryRadius: { type: Number, default: 10 },   // km
+    deliveryFee: { type: Number, default: 0 },
+  },
+  
+  isActive: { type: Boolean, default: true },
+};
+
+// Compound unique: slug must be unique within a company
+branchSchema.index({ companyId: 1, slug: 1 }, { unique: true });
+```
+
+##### [NEW] [company.service.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/company/services/company.service.js)
+##### [NEW] [company.controller.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/company/controllers/company.controller.js)
+##### [NEW] [company.routes.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/company/routes/company.routes.js)
+##### [NEW] [company/index.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/company/index.js)
+
+**API Endpoints:**
+```
+# Super Admin
+POST   /api/v2/companies                    — Create company
+GET    /api/v2/companies                    — List all companies
+GET    /api/v2/companies/:companyId         — Get company details
+PATCH  /api/v2/companies/:companyId         — Update company
+DELETE /api/v2/companies/:companyId         — Deactivate company
+
+# Company Admin
+POST   /api/v2/companies/:companyId/branches              — Create branch
+GET    /api/v2/companies/:companyId/branches              — List branches
+GET    /api/v2/companies/:companyId/branches/:branchId    — Get branch
+PATCH  /api/v2/companies/:companyId/branches/:branchId    — Update branch
+DELETE /api/v2/companies/:companyId/branches/:branchId    — Deactivate branch
+
+# Staff Management
+POST   /api/v2/branches/:branchId/staff             — Add staff member
+GET    /api/v2/branches/:branchId/staff             — List branch staff
+PATCH  /api/v2/branches/:branchId/staff/:userId     — Update staff
+DELETE /api/v2/branches/:branchId/staff/:userId     — Remove staff
+```
+
+---
+
+### Phase 3: Add Tenant IDs to ALL Existing Models
+
+---
+
+> [!IMPORTANT]
+> This is the **biggest change**. Every existing model gets `companyId` + `branchId` fields, and every query/service function gets scoped by these IDs.
+
+#### [MODIFY] [order.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/order/models/order.model.js)
+
+Add to schema:
+```javascript
+companyId: { type: ObjectId, ref: "Company", required: true, index: true },
+branchId: { type: ObjectId, ref: "Branch", required: true, index: true },
+createdBy: { type: ObjectId, ref: "User", default: null },  // who placed the order
+```
+
+Update indexes:
+```javascript
+orderSchema.index({ branchId: 1, createdAt: -1 });
+orderSchema.index({ branchId: 1, status: 1, createdAt: -1 });
+orderSchema.index({ companyId: 1, createdAt: -1 });
+```
+
+Update `generateOrderNumber` — scope counter by branchId:
+```javascript
+// OrderCounter._id becomes: `${branchId}_${dateString}` instead of just dateString
+```
+
+#### [MODIFY] [product.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/menu/models/product.model.js)
+
+Add:
+```javascript
+companyId: { type: ObjectId, ref: "Company", required: true, index: true },
+branchId: { type: ObjectId, ref: "Branch", required: true, index: true },
+```
+
+#### [MODIFY] [category.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/menu/models/category.model.js)
+
+Add:
+```javascript
+companyId: { type: ObjectId, ref: "Company", required: true, index: true },
+branchId: { type: ObjectId, ref: "Branch", required: true, index: true },
+```
+
+Change slug unique index → compound unique:
+```javascript
+categorySchema.index({ branchId: 1, slug: 1 }, { unique: true });
+```
+
+#### [MODIFY] [modifier.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/menu/models/modifier.model.js)
+
+Add `companyId` + `branchId`.
+
+#### [MODIFY] [expense.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/expense/models/expense.model.js)
+
+Add `companyId` + `branchId` + `createdBy` (which staff member created the expense).
+
+#### [MODIFY] [deposit.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/order/models/deposit.model.js)
+
+Add `companyId` + `branchId`. Change unique index on `date` → compound unique `{ branchId, date }`.
+
+#### [MODIFY] [payment.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/payment/models/payment.model.js)
+
+Add `companyId` + `branchId`.
+
+#### [MODIFY] [promo.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/promo/models/promo.model.js)
+
+Add `companyId` + optional `branchId` (null = company-wide promo).
+Change unique on `code` → compound `{ companyId, code }`.
+
+#### [MODIFY] [Driver.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/delivery/models/Driver.model.js)
+
+Change `restaurantId: String` → `companyId: ObjectId` + `branchId: ObjectId`. Link to User model via `userId` field.
+
+#### [MODIFY] [Vehicle.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/delivery/models/Vehicle.model.js)
+
+Same: `restaurantId` → `companyId` + `branchId` (ObjectId refs).
+
+#### [MODIFY] [DeliveryAssignment.model.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/delivery/models/DeliveryAssignment.model.js)
+
+Same: `restaurantId` → `companyId` + `branchId` (ObjectId refs).
+
+---
+
+### Phase 4: Update ALL Service/Controller/Routes with Auth & Tenant Scoping
+
+---
+
+#### [MODIFY] [order.service.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/order/services/order.service.js)
+
+**Every function** that queries orders must add `branchId` filter:
+```javascript
+// Before (V1):
+const orders = await Order.find({ status: { $in: statuses } });
+
+// After (V2):
+const orders = await Order.find({ branchId: req.user.branchId, status: { $in: statuses } });
+```
+
+Functions to update:
+- `createOrder` — auto-inject `companyId`, `branchId`, `createdBy` from `req.user`
+- `getAllOrders` — filter by branchId
+- `getOrderById` — verify branchId matches
+- `updateOrderStatus` — verify branchId
+- `markOrderPaid` — verify branchId
+- `cancelOrder` — verify branchId
+- `getSalesSummary` — filter by branchId
+- `getReportsSummary` — filter by branchId
+- `getDashboardMetrics` — filter by branchId
+- `getMonthlySalesSummary` — filter by branchId
+- `getHourlySalesSummary` — filter by branchId
+- `getItemSalesSummary` — filter by branchId
+- `getCustomers` — filter by branchId
+- All PDF generation functions — filter by branchId
+
+#### [MODIFY] [menu.service.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/modules/menu/services/menu.service.js)
+
+Same pattern — all CRUD operations scoped to branchId:
+- `getPOSMenuFeed` → cache key becomes `pos-menu:${branchId}`
+- `getCategories` → filter by branchId
+- `getProducts` → filter by branchId
+- All create/update/delete → inject branchId
+
+#### [MODIFY] All other service files (expense, promo, payment, delivery)
+
+Same tenant-scoping pattern applied.
+
+#### [MODIFY] All routes files
+
+Wrap every route with `authenticate` + `requireRole(...)` middleware:
+```javascript
+// Before:
+router.get("/orders", orderController.getAllOrders);
+
+// After:
+router.get("/orders",
+  authenticate,
+  requireRole("employee", "cashier", "manager", "branch-admin", "company-admin"),
+  requireBranch,
+  orderController.getAllOrders
+);
+```
+
+#### [MODIFY] [app.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/app.js)
+
+- Register new auth module: `initAuthModule(app)`
+- Register new company module: `initCompanyModule(app)`
+- Add global error handler
+- Add input validation middleware
+- API versioning: mount V2 routes under `/api/v2/`
+- Keep V1 routes under `/api/` for backward compatibility during migration
+
+---
+
+### Phase 5: Update Pusher for Multi-Tenant Real-time
+
+---
+
+#### [MODIFY] [pusher.js](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/backend/src/config/pusher.js) (backend)
+
+Channels become branch-scoped:
+```javascript
+// Before:
+pusher.trigger("orders", "new-order", orderData);
+
+// After:
+pusher.trigger(`orders-${branchId}`, "new-order", orderData);
+```
+
+#### [MODIFY] [pusher.ts](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/branch/lib/pusher.ts) (frontend)
+
+Subscribe to branch-specific channel:
+```typescript
+// Before:
+const channel = pusher.subscribe('orders');
+
+// After:
+const channel = pusher.subscribe(`orders-${branchId}`);
+```
+
+---
+
+### Phase 6: Frontend Updates
+
+---
+
+#### Super Admin Panel — [super-admin/](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/super-admin/)
+
+Currently only has menu management. Needs major expansion:
+
+##### [NEW] `super-admin/app/admin/companies/page.tsx` — Companies listing
+##### [NEW] `super-admin/app/admin/companies/[companyId]/page.tsx` — Company detail + branches
+##### [NEW] `super-admin/app/admin/companies/create/page.tsx` — Create company form
+##### [NEW] `super-admin/app/admin/users/page.tsx` — All users management
+##### [NEW] `super-admin/app/admin/dashboard/page.tsx` — Platform-wide analytics
+##### [MODIFY] `super-admin/app/components/AdminLayout.tsx` — Add new sidebar links
+
+**Super Admin Pages:**
+- Dashboard (total companies, branches, orders, revenue)
+- Companies (CRUD)
+- Company Detail (branches list, stats)
+- Users Management (all platform users)
+- Settings (platform-level)
+
+---
+
+#### New: Company Admin Panel
+
+> [!IMPORTANT]
+> **Decision needed:** Create a new `company-admin/` folder (separate Next.js app) OR add company-admin routes inside `super-admin/` or `branch/`?
+>
+> **Recommendation:** Create new `company-admin/` app for clean separation, running on port :3004.
+
+##### [NEW] `company-admin/` — New Next.js app
+
+**Pages:**
+- `/login` — Company admin login
+- `/dashboard` — Company-wide dashboard (all branches combined)
+- `/branches` — List & manage branches
+- `/branches/create` — Create new branch
+- `/branches/[branchId]` — Branch detail & settings
+- `/staff` — Manage all staff across branches
+- `/staff/create` — Add new staff member
+- `/analytics` — Company-wide reports (cross-branch)
+- `/settings` — Company settings (tax, timezone, currency)
+- `/promos` — Company-wide promo management
+
+---
+
+#### Branch Panel — [branch/](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/branch/)
+
+##### [NEW] `branch/app/login/page.tsx` — Login page for branch staff
+
+##### [MODIFY] `branch/app/layout.tsx`
+- Add auth context provider
+- Add branch context (branchId, companyId from JWT)
+
+##### [NEW] `branch/lib/auth.ts` — Auth utilities
+- `login(email, password)` → store JWT in httpOnly cookie or localStorage
+- `logout()` → clear token
+- `getToken()` → retrieve current token
+- `useAuth()` hook — returns current user, role, branchId
+
+##### [MODIFY] All 50+ components in `branch/modules/employee-pos/components/`
+- All API calls must include JWT token in `Authorization: Bearer <token>` header
+- Pusher subscription uses `orders-${branchId}` channel
+- Role-based UI visibility (e.g., manager sees expense management, employee doesn't)
+
+##### [NEW] `branch/modules/employee-pos/components/StaffManagement.tsx`
+##### [NEW] `branch/modules/employee-pos/components/BranchSettings.tsx`
+
+**Role-Based Feature Access Matrix:**
+
+| Feature | Branch Admin | Manager | Employee | Cashier | Driver |
+|---------|:-----------:|:-------:|:--------:|:-------:|:------:|
+| POS Terminal | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Kitchen Display | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Reception Display | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Orders Dashboard | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Sales Summary | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Reports | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Expenses | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Menu Management | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Staff Management | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Branch Settings | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Delivery Management | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Customer Management | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Promo Management | ✅ | ✅ | ❌ | ❌ | ❌ |
+
+---
+
+#### User Frontend — [user-frontend/](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/user-frontend/)
+
+##### [MODIFY] `user-frontend/app/page.tsx`
+- Customer must first select **Company** → then **Branch** before ordering
+- OR: URL-based routing — `/chicken-delight/downtown` loads that branch's menu
+- Branch selector UI with location-based sorting (show nearest branches first)
+
+---
+
+#### Driver Web — [driver-web/](file:///c:/Users/yoges/Desktop/Cyber Nest/restaurant-management-system/driver-web/)
+
+##### [MODIFY] `driver-web/app/page.tsx`
+- Login uses new auth system (email + password → JWT)
+- Dashboard scoped to assigned branch deliveries
+- Pusher channel becomes `deliveries-${branchId}`
+
+---
+
+## Data Migration Strategy
+
+For existing V1 data to work with V2:
+
+1. Create a default Company: `{ name: "Chicken Delight", slug: "chicken-delight" }`
+2. Create a default Branch: `{ companyId: <above>, name: "Main Branch", slug: "main" }`
+3. Run migration script to add `companyId` + `branchId` to ALL existing documents
+4. Create a default super-admin user
+5. Create a default company-admin user
+
+```javascript
+// migration script pseudo-code
+const defaultCompany = await Company.create({ name: "Chicken Delight", ... });
+const defaultBranch = await Branch.create({ companyId: defaultCompany._id, name: "Main Branch", ... });
+
+// Update all existing documents
+await Order.updateMany({}, { $set: { companyId: defaultCompany._id, branchId: defaultBranch._id } });
+await Product.updateMany({}, { $set: { companyId: defaultCompany._id, branchId: defaultBranch._id } });
+// ... repeat for all models
+```
+
+---
+
+## New Folder Structure (Backend)
+
+```
+backend/src/
+├── config/
+│   ├── db.js
+│   ├── pusher.js
+│   └── cloudinary.config.js
+├── shared/
+│   ├── middleware/
+│   │   ├── auth.middleware.js          ← NEW
+│   │   ├── validation.middleware.js    ← NEW
+│   │   └── tenant.middleware.js        ← NEW (auto-inject branchId/companyId)
+│   └── utils/
+│       ├── logger.js
+│       └── timezone.js
+├── modules/
+│   ├── auth/                           ← NEW MODULE
+│   │   ├── controllers/
+│   │   ├── models/
+│   │   ├── routes/
+│   │   ├── services/
+│   │   └── index.js
+│   ├── company/                        ← NEW MODULE
+│   │   ├── controllers/
+│   │   ├── models/                     (Company + Branch models)
+│   │   ├── routes/
+│   │   ├── services/
+│   │   └── index.js
+│   ├── menu/                           (MODIFIED - add tenant scoping)
+│   ├── order/                          (MODIFIED - add tenant scoping)
+│   ├── promo/                          (MODIFIED - add tenant scoping)
+│   ├── expense/                        (MODIFIED - add tenant scoping)
+│   ├── payment/                        (MODIFIED - add tenant scoping)
+│   └── delivery/                       (MODIFIED - add tenant scoping)
+├── app.js                              (MODIFIED - register new modules, add auth)
+└── server.js
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+```bash
+# After Phase 1 (Auth)
+node scripts/test-auth.js              # Test login, register, JWT, role checks
+
+# After Phase 2 (Company/Branch)
+node scripts/test-company-crud.js      # Test company + branch CRUD
+
+# After Phase 3 (Tenant Isolation)
+node scripts/test-tenant-isolation.js  # Verify Branch A can't see Branch B data
+
+# After Phase 6 (Frontend)
+npm run build --prefix branch          # Verify branch frontend compiles
+npm run build --prefix super-admin     # Verify super-admin compiles
+npm run build --prefix company-admin   # Verify company-admin compiles
+```
+
+### Manual Verification
+1. Login flow — Super Admin creates Company → Company Admin creates Branch → Branch Admin adds staff → Staff logs in
+2. Tenant isolation — Create 2 branches, verify orders/menu/expenses are completely separated
+3. Role-based access — Employee can't access manager routes, manager can't access admin routes
+4. Real-time — Orders created in Branch A don't appear in Branch B's kitchen display
+5. Migration — Run migration script on existing V1 data, verify everything still works
+
+---
+
+## Implementation Order (Recommended)
+
+| Phase | Description | Estimated Effort | Dependencies |
+|-------|-------------|-----------------|--------------|
+| **Phase 1** | Auth + User Model | 2-3 days | None |
+| **Phase 2** | Company + Branch Models | 1-2 days | Phase 1 |
+| **Phase 3** | Add tenant IDs to all models | 2-3 days | Phase 2 |
+| **Phase 4** | Update all services/routes | 3-5 days | Phase 3 |
+| **Phase 5** | Pusher multi-tenant | 1 day | Phase 4 |
+| **Phase 6** | Frontend updates | 5-7 days | Phase 4 |
+
+**Total estimated: ~15-20 days of work**
+
+> [!TIP]
+> **Recommendation:** Start with Phase 1 (Auth) because it's the foundation for everything else and can be tested independently. Then move sequentially through each phase.

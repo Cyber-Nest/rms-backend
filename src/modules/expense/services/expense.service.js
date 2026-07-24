@@ -24,6 +24,9 @@ exports.getExpenses = async (filters = {}) => {
         query.expenseDate = { $gte: start, $lte: end };
       }
     }
+    if (filters.branchId) {
+      query.branchId = filters.branchId;
+    }
     if (filters.employeeName) {
       query.employeeName = { $regex: filters.employeeName, $options: 'i' };
     }

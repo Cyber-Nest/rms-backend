@@ -51,10 +51,17 @@ const expenseSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    branchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Branch',
+      default: null,
+      index: true,
+    },
   },
   { timestamps: true }
 );
 
 expenseSchema.index({ expenseDate: -1 });
+expenseSchema.index({ branchId: 1, expenseDate: -1 });
 
 module.exports = mongoose.model('Expense', expenseSchema);

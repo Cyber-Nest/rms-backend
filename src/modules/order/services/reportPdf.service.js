@@ -1,8 +1,24 @@
 const PDFDocument = require("pdfkit");
 const logger = require("../../../shared/utils/logger");
+const Branch = require("../../company/models/branch.model");
 
-exports.generateReportPdf = (type, data, dateRangeStr, res) => {
+exports.generateReportPdf = async (type, data, dateRangeStr, res, branchId = null) => {
   try {
+    let branchName = "Chicken Delight";
+    let branchCode = "";
+
+    if (branchId) {
+      try {
+        const b = await Branch.findById(branchId).lean();
+        if (b) {
+          if (b.name) branchName = b.name;
+          if (b.code) branchCode = `[${b.code}] `;
+        }
+      } catch (err) {
+        logger.warn(`Could not fetch branch info for report PDF: ${err.message}`);
+      }
+    }
+
     const isLandscape = type === "monthly_sales_summary";
     const doc = new PDFDocument({
       size: "LETTER",
@@ -30,7 +46,7 @@ exports.generateReportPdf = (type, data, dateRangeStr, res) => {
       .font("Helvetica-Bold")
       .fontSize(20)
       .fillColor("#8a1538") // Brand primary color
-      .text("Chicken Delight", 40, doc.y, { align: "center", width: printableWidth });
+      .text(`${branchCode}${branchName}`, 40, doc.y, { align: "center", width: printableWidth });
 
     doc
       .font("Helvetica-Bold")

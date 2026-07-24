@@ -1,8 +1,36 @@
 const PDFDocument = require("pdfkit");
 const logger = require("../../../shared/utils/logger");
+const Branch = require("../../company/models/branch.model");
 
-exports.generateReceiptPdf = (order, res) => {
+exports.generateReceiptPdf = async (order, res) => {
   try {
+    let branchInfo = {
+      name: order.branchName || "Chicken Delight",
+      code: order.branchCode || "DELIGHT",
+      address: "231 Edgefield Pl , Strathmore,",
+      city: "Alberta, T1P 0E8, Canada",
+      phone: "(587) 365-5401",
+      gst: "123456789",
+    };
+
+    if (order.branchId) {
+      try {
+        const b =
+          typeof order.branchId === "object" && order.branchId.name
+            ? order.branchId
+            : await Branch.findById(order.branchId).lean();
+        if (b) {
+          if (b.name) branchInfo.name = b.name;
+          if (b.code) branchInfo.code = b.code;
+          if (b.address) branchInfo.address = b.address;
+          if (b.city) branchInfo.city = b.city;
+          if (b.phone) branchInfo.phone = b.phone;
+        }
+      } catch (err) {
+        logger.warn(`Could not fetch branch info for receipt PDF: ${err.message}`);
+      }
+    }
+
     // 80mm width 
     const doc = new PDFDocument({
       size: [226, 800],
@@ -57,15 +85,15 @@ exports.generateReceiptPdf = (order, res) => {
     // 1. Header & Store Info Box
     doc
       .font("Helvetica-Bold")
-      .fontSize(14)
-      .text("Chicken Delight", startX, doc.y, {
+      .fontSize(13)
+      .text(branchInfo.name, startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc
       .font("Helvetica-Bold")
       .fontSize(8)
-      .text("DELIGHT", startX, doc.y, {
+      .text(branchInfo.code, startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
@@ -74,19 +102,19 @@ exports.generateReceiptPdf = (order, res) => {
     // Dashed Store Info Box
     const boxStartY = doc.y;
     doc.font("Helvetica").fontSize(7.5);
-    doc.text("231 Edgefield Pl , Strathmore,", startX + 5, boxStartY + 4, {
+    doc.text(branchInfo.address, startX + 5, boxStartY + 4, {
       align: "center",
       width: printableWidth - 10,
     });
-    doc.text("Alberta, T1P 0E8, Canada", {
+    doc.text(branchInfo.city, {
       align: "center",
       width: printableWidth - 10,
     });
-    doc.text("Tel # : (587) 365-5401", {
+    doc.text(`Tel # : ${branchInfo.phone}`, {
       align: "center",
       width: printableWidth - 10,
     });
-    doc.text("GST# : 123456789", {
+    doc.text(`GST# : ${branchInfo.gst}`, {
       align: "center",
       width: printableWidth - 10,
     });
@@ -488,8 +516,36 @@ exports.generateReceiptPdf = (order, res) => {
   }
 };
 
-exports.generateSalesSummaryReceiptPdf = (summary, dateStr, res) => {
+exports.generateSalesSummaryReceiptPdf = async (summary, dateStr, res, branchId = null) => {
   try {
+    let branchInfo = {
+      name: summary.branchName || "Chicken Delight",
+      code: summary.branchCode || "DELIGHT",
+      address: "231 Edgefield Pl , Strathmore,",
+      city: "Alberta, T1P 0E8, Canada",
+      phone: "(587) 365-5401",
+      gst: "123456789",
+    };
+
+    const targetBranchId = branchId || summary.branchId;
+    if (targetBranchId) {
+      try {
+        const b =
+          typeof targetBranchId === "object" && targetBranchId.name
+            ? targetBranchId
+            : await Branch.findById(targetBranchId).lean();
+        if (b) {
+          if (b.name) branchInfo.name = b.name;
+          if (b.code) branchInfo.code = b.code;
+          if (b.address) branchInfo.address = b.address;
+          if (b.city) branchInfo.city = b.city;
+          if (b.phone) branchInfo.phone = b.phone;
+        }
+      } catch (err) {
+        logger.warn(`Could not fetch branch info for sales summary receipt: ${err.message}`);
+      }
+    }
+
     // 80mm width. Since a daily summary has category lists, payment summaries, order types and expenses,
     // we set height to 1200. This is standard for receipt print outputs.
     const doc = new PDFDocument({
@@ -518,9 +574,9 @@ exports.generateSalesSummaryReceiptPdf = (summary, dateStr, res) => {
     // 1. Header & Store Info Box (strictly Black & White)
     doc
       .font("Helvetica-Bold")
-      .fontSize(14)
+      .fontSize(13)
       .fillColor("#000000")
-      .text("Chicken Delight", startX, doc.y, {
+      .text(branchInfo.name, startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
@@ -528,7 +584,7 @@ exports.generateSalesSummaryReceiptPdf = (summary, dateStr, res) => {
       .font("Helvetica-Bold")
       .fontSize(8)
       .fillColor("#000000")
-      .text("DELIGHT", startX, doc.y, {
+      .text(branchInfo.code, startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
@@ -537,19 +593,19 @@ exports.generateSalesSummaryReceiptPdf = (summary, dateStr, res) => {
     // Dashed Store Info Box
     const boxStartY = doc.y;
     doc.font("Helvetica").fontSize(7.5).fillColor("#000000");
-    doc.text("231 Edgefield Pl , Strathmore,", startX + 5, boxStartY + 4, {
+    doc.text(branchInfo.address, startX + 5, boxStartY + 4, {
       align: "center",
       width: printableWidth - 10,
     });
-    doc.text("Alberta, T1P 0E8, Canada", {
+    doc.text(branchInfo.city, {
       align: "center",
       width: printableWidth - 10,
     });
-    doc.text("Tel # : (587) 365-5401", {
+    doc.text(`Tel # : ${branchInfo.phone}`, {
       align: "center",
       width: printableWidth - 10,
     });
-    doc.text("GST# : 123456789", {
+    doc.text(`GST# : ${branchInfo.gst}`, {
       align: "center",
       width: printableWidth - 10,
     });

@@ -57,8 +57,9 @@ exports.getAllOrders = async (req, res) => {
 
 exports.getSalesSummary = async (req, res) => {
   try {
-    const { date, startDate, endDate } = req.query;
-    const summary = await orderService.getSalesSummary({ date, startDate, endDate });
+    const { date, startDate, endDate, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const summary = await orderService.getSalesSummary({ date, startDate, endDate, branchId: activeBranchId });
     res.status(200).json({ success: true, data: summary });
   } catch (error) {
     handleError(res, error, 500);
@@ -68,8 +69,9 @@ exports.getSalesSummary = async (req, res) => {
 
 exports.getReportsSummary = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    const summary = await orderService.getReportsSummary({ startDate, endDate });
+    const { startDate, endDate, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const summary = await orderService.getReportsSummary({ startDate, endDate, branchId: activeBranchId });
     res.status(200).json({ success: true, data: summary });
   } catch (error) {
     handleError(res, error, 500);
@@ -79,8 +81,9 @@ exports.getReportsSummary = async (req, res) => {
 
 exports.getItemSalesSummary = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    const summary = await orderService.getItemSalesSummary({ startDate, endDate });
+    const { startDate, endDate, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const summary = await orderService.getItemSalesSummary({ startDate, endDate, branchId: activeBranchId });
     res.status(200).json({ success: true, data: summary });
   } catch (error) {
     handleError(res, error, 500);
@@ -90,8 +93,9 @@ exports.getItemSalesSummary = async (req, res) => {
 
 exports.getHourlySalesSummary = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    const summary = await orderService.getHourlySalesSummary({ startDate, endDate });
+    const { startDate, endDate, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const summary = await orderService.getHourlySalesSummary({ startDate, endDate, branchId: activeBranchId });
     res.status(200).json({ success: true, data: summary });
   } catch (error) {
     handleError(res, error, 500);
@@ -101,8 +105,9 @@ exports.getHourlySalesSummary = async (req, res) => {
 
 exports.getMonthlySalesSummary = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    const summary = await orderService.getMonthlySalesSummary({ startDate, endDate });
+    const { startDate, endDate, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const summary = await orderService.getMonthlySalesSummary({ startDate, endDate, branchId: activeBranchId });
     res.status(200).json({ success: true, data: summary });
   } catch (error) {
     handleError(res, error, 500);
@@ -113,8 +118,9 @@ exports.getMonthlySalesSummary = async (req, res) => {
 
 exports.getDashboardMetrics = async (req, res) => {
   try {
-    const { date } = req.query;
-    const metrics = await orderService.getDashboardMetrics({ date });
+    const { date, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const metrics = await orderService.getDashboardMetrics({ date, branchId: activeBranchId });
     res.status(200).json({ success: true, data: metrics });
   } catch (error) {
     handleError(res, error, 500);
@@ -151,7 +157,7 @@ exports.downloadReceiptPdf = async (req, res) => {
     }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=invoice-${order.orderNumber}.pdf`);
-    receiptPdfService.generateReceiptPdf(order, res);
+    await receiptPdfService.generateReceiptPdf(order, res);
   } catch (error) {
     handleError(res, error, 500);
   }
@@ -253,8 +259,9 @@ exports.updateOrderItems = async (req, res) => {
 
 exports.saveDeposit = async (req, res) => {
   try {
-    const { date, cashAmount, cardAmount, accountPayAmount } = req.body;
-    const deposit = await orderService.saveDeposit({ date, cashAmount, cardAmount, accountPayAmount });
+    const { date, cashAmount, cardAmount, accountPayAmount, branchId } = req.body;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const deposit = await orderService.saveDeposit({ date, cashAmount, cardAmount, accountPayAmount, branchId: activeBranchId });
     res.status(200).json({ success: true, data: deposit });
   } catch (error) {
     handleError(res, error, 400);
@@ -264,7 +271,8 @@ exports.saveDeposit = async (req, res) => {
 
 exports.exportReport = async (req, res) => {
   try {
-    const { type, format, startDate, endDate, search, status } = req.query;
+    const { type, format, startDate, endDate, search, status, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
     if (!type || !format) {
       return res.status(400).json({ success: false, message: "Type and format query parameters are required." });
     }
@@ -275,13 +283,13 @@ exports.exportReport = async (req, res) => {
       : `${formatDateOnly(startDate)} - ${formatDateOnly(endDate)}`;
 
     if (type === "item_sales") {
-      reportData = await orderService.getItemSalesSummary({ startDate, endDate });
+      reportData = await orderService.getItemSalesSummary({ startDate, endDate, branchId: activeBranchId });
     } else if (type === "hourly_sales") {
-      reportData = await orderService.getHourlySalesSummary({ startDate, endDate });
+      reportData = await orderService.getHourlySalesSummary({ startDate, endDate, branchId: activeBranchId });
     } else if (type === "monthly_sales_summary") {
-      reportData = await orderService.getMonthlySalesSummary({ startDate, endDate });
+      reportData = await orderService.getMonthlySalesSummary({ startDate, endDate, branchId: activeBranchId });
     } else if (type === "cash_out_summary") {
-      const allOrders = await orderService.getAllOrders({ startDate, endDate, status: "completed" });
+      const allOrders = await orderService.getAllOrders({ startDate, endDate, status: "completed", branchId: activeBranchId });
       const groups = {};
       allOrders.forEach((order) => {
         const empName = order.customer?.name === 'No Name' || !order.customer?.name ? 'Manager' : order.customer.name;
@@ -301,7 +309,7 @@ exports.exportReport = async (req, res) => {
       });
       reportData = Object.values(groups);
     } else if (type === "failed_transaction" || type === "refund_orders") {
-      const allOrders = await orderService.getAllOrders({ startDate, endDate });
+      const allOrders = await orderService.getAllOrders({ startDate, endDate, branchId: activeBranchId });
       reportData = allOrders.filter((order) => {
         if (type === "failed_transaction") {
           const isFailed = order.status === 'cancelled' || order.paymentStatus === 'unpaid';
@@ -330,7 +338,7 @@ exports.exportReport = async (req, res) => {
     if (format === "pdf") {
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `attachment; filename=${type}-report-${startDate}-to-${endDate}.pdf`);
-      reportPdfService.generateReportPdf(type, reportData, dateRangeStr, res);
+      await reportPdfService.generateReportPdf(type, reportData, dateRangeStr, res, activeBranchId);
     } else {
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename=${type}-report-${startDate}-to-${endDate}.csv`);
@@ -344,15 +352,16 @@ exports.exportReport = async (req, res) => {
 
 exports.downloadSalesSummaryPdf = async (req, res) => {
   try {
-    const { date, startDate, endDate } = req.query;
-    const summary = await orderService.getSalesSummary({ date, startDate, endDate });
+    const { date, startDate, endDate, branchId } = req.query;
+    const activeBranchId = branchId || req.branch?.branchId || req.branch?._id;
+    const summary = await orderService.getSalesSummary({ date, startDate, endDate, branchId: activeBranchId });
 
     const fileDateStr = date || startDate || getLocalDateStr();
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename=sales-summary-${fileDateStr}.pdf`);
 
-    receiptPdfService.generateSalesSummaryReceiptPdf(summary, fileDateStr, res);
+    await receiptPdfService.generateSalesSummaryReceiptPdf(summary, fileDateStr, res, activeBranchId);
   } catch (error) {
     handleError(res, error, 500);
   }

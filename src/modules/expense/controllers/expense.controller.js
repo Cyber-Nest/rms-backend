@@ -2,7 +2,9 @@ const expenseService = require('../services/expense.service');
 
 exports.createExpense = async (req, res) => {
   try {
-    const expense = await expenseService.createExpense(req.body);
+    const branchId = req.body.branchId || req.branch?.branchId || req.branch?._id;
+    const expenseData = { ...req.body, ...(branchId ? { branchId } : {}) };
+    const expense = await expenseService.createExpense(expenseData);
     return res.status(201).json({
       success: true,
       message: 'Expense added successfully',
@@ -18,7 +20,9 @@ exports.createExpense = async (req, res) => {
 
 exports.getExpenses = async (req, res) => {
   try {
-    const expenses = await expenseService.getExpenses(req.query);
+    const branchId = req.query.branchId || req.branch?.branchId || req.branch?._id;
+    const filters = { ...req.query, ...(branchId ? { branchId } : {}) };
+    const expenses = await expenseService.getExpenses(filters);
     return res.status(200).json({
       success: true,
       data: expenses
