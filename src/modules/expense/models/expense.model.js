@@ -63,5 +63,6 @@ const expenseSchema = new mongoose.Schema(
 
 expenseSchema.index({ expenseDate: -1 });
 expenseSchema.index({ branchId: 1, expenseDate: -1 });
+expenseSchema.index({ branchId: 1, expenseDate: -1, employeeName: 1 });
 
 module.exports = mongoose.model('Expense', expenseSchema);

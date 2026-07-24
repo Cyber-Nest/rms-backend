@@ -141,32 +141,70 @@ exports.getAllProducts = async () => {
   }
 };
 
-exports.getBranchProductsList = async () => {
+exports.getBranchProductsList = async (branchId) => {
   try {
-    return await Product.find()
-      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock')
+    const products = await Product.find()
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock disabledBranches outOfStockBranches')
       .populate('categoryId', 'name')
       .sort({ name: 1 });
+
+    if (branchId) {
+      const bIdStr = branchId.toString();
+      return products.map(p => {
+        const pObj = p.toObject();
+        const isDisabledForBranch = p.disabledBranches && p.disabledBranches.some(b => b.toString() === bIdStr);
+        const isOutOfStockForBranch = p.outOfStockBranches && p.outOfStockBranches.some(b => b.toString() === bIdStr);
+        return {
+          ...pObj,
+          isActive: isDisabledForBranch ? false : p.isActive,
+          isOutOfStock: isOutOfStockForBranch ? true : p.isOutOfStock,
+        };
+      });
+    }
+
+    return products;
   } catch (error) {
     logger.error(`Menu Service Error: getBranchProductsList - ${error.message}`);
     throw error;
   }
 };
 
-exports.toggleProductActive = async (id, isActive) => {
+exports.toggleProductActive = async (id, isActive, branchId) => {
   try {
+    let updateQuery = {};
+    if (branchId) {
+      updateQuery = isActive === false
+        ? { $addToSet: { disabledBranches: branchId } }
+        : { $pull: { disabledBranches: branchId } };
+    } else {
+      updateQuery = { isActive };
+    }
+
     const product = await Product.findByIdAndUpdate(
       id,
-      { isActive },
+      updateQuery,
       { returnDocument: 'after', runValidators: true }
     )
-      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock')
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock disabledBranches outOfStockBranches')
       .populate('categoryId', 'name');
     
     if (!product) {
       throw new Error('Product not found.');
     }
     clearPOSMenuCache();
+
+    if (branchId) {
+      const bIdStr = branchId.toString();
+      const pObj = product.toObject();
+      const isDisabledForBranch = product.disabledBranches && product.disabledBranches.some(b => b.toString() === bIdStr);
+      const isOutOfStockForBranch = product.outOfStockBranches && product.outOfStockBranches.some(b => b.toString() === bIdStr);
+      return {
+        ...pObj,
+        isActive: isDisabledForBranch ? false : product.isActive,
+        isOutOfStock: isOutOfStockForBranch ? true : product.isOutOfStock,
+      };
+    }
+
     return product;
   } catch (error) {
     logger.error(`Menu Service Error: toggleProductActive - ${error.message}`);
@@ -174,20 +212,42 @@ exports.toggleProductActive = async (id, isActive) => {
   }
 };
 
-exports.toggleProductStock = async (id, isOutOfStock) => {
+exports.toggleProductStock = async (id, isOutOfStock, branchId) => {
   try {
+    let updateQuery = {};
+    if (branchId) {
+      updateQuery = isOutOfStock === true
+        ? { $addToSet: { outOfStockBranches: branchId } }
+        : { $pull: { outOfStockBranches: branchId } };
+    } else {
+      updateQuery = { isOutOfStock };
+    }
+
     const product = await Product.findByIdAndUpdate(
       id,
-      { isOutOfStock },
+      updateQuery,
       { returnDocument: 'after', runValidators: true }
     )
-      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock')
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock disabledBranches outOfStockBranches')
       .populate('categoryId', 'name');
     
     if (!product) {
       throw new Error('Product not found.');
     }
     clearPOSMenuCache();
+
+    if (branchId) {
+      const bIdStr = branchId.toString();
+      const pObj = product.toObject();
+      const isDisabledForBranch = product.disabledBranches && product.disabledBranches.some(b => b.toString() === bIdStr);
+      const isOutOfStockForBranch = product.outOfStockBranches && product.outOfStockBranches.some(b => b.toString() === bIdStr);
+      return {
+        ...pObj,
+        isActive: isDisabledForBranch ? false : product.isActive,
+        isOutOfStock: isOutOfStockForBranch ? true : product.isOutOfStock,
+      };
+    }
+
     return product;
   } catch (error) {
     logger.error(`Menu Service Error: toggleProductStock - ${error.message}`);
@@ -314,6 +374,8 @@ exports.getPOSMenuFeed = async (branchId = null) => {
       })
       .lean();
     
+    const bIdStr = branchId ? branchId.toString() : null;
+
     const feed = {
       categories: categories.map(cat => ({
         id: cat._id.toHexString(),
@@ -323,20 +385,26 @@ exports.getPOSMenuFeed = async (branchId = null) => {
         image: cat.image,
         disabledBranches: cat.disabledBranches || [],
       })),
-      menuItems: products.map(prod => ({
-        id: prod._id.toHexString(),
-        productId: prod.productId || "",
-        categoryId: prod.categoryId.toString(),
-        name: prod.name,
-        description: prod.description,
-        image: prod.image,
-        price: prod.price,
-        badge: prod.badge,
-        isPopular: prod.isPopular,
-        kitchenLabel: prod.kitchenLabel || 'chicken',
-        itemType: prod.itemType,
-        isOutOfStock: prod.isOutOfStock || false,
-        disabledBranches: prod.disabledBranches || [],
+      menuItems: products.map(prod => {
+        const isOutOfStockForBranch = bIdStr && prod.outOfStockBranches
+          ? prod.outOfStockBranches.some(b => b.toString() === bIdStr) || prod.isOutOfStock
+          : prod.isOutOfStock;
+
+        return {
+          id: prod._id.toHexString(),
+          productId: prod.productId || "",
+          categoryId: prod.categoryId.toString(),
+          name: prod.name,
+          description: prod.description,
+          image: prod.image,
+          price: prod.price,
+          badge: prod.badge,
+          isPopular: prod.isPopular,
+          kitchenLabel: prod.kitchenLabel || 'chicken',
+          itemType: prod.itemType,
+          isOutOfStock: !!isOutOfStockForBranch,
+          disabledBranches: prod.disabledBranches || [],
+          outOfStockBranches: prod.outOfStockBranches || [],
         modifierGroups: prod.modifierGroups.map(g => ({
           id: g._id.toHexString(),
           name: g.name,
@@ -367,7 +435,8 @@ exports.getPOSMenuFeed = async (branchId = null) => {
             })) : []
           }))
         }))
-      }))
+        };
+      })
     };
 
     if (!branchId) {

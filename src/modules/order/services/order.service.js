@@ -486,9 +486,9 @@ exports.cancelOrder = async (id) => {
 };
 
 // ── Get Next Order Number ──────────────────────────────────────
-exports.getNextOrderNumber = async (orderType) => {
+exports.getNextOrderNumber = async (orderType, branchId = null) => {
   try {
-    const nextNumber = await Order.previewNextOrderNumber(orderType);
+    const nextNumber = await Order.previewNextOrderNumber(orderType, branchId);
     return nextNumber;
   } catch (error) {
     logger.error(`Order Service Error: getNextOrderNumber - ${error.message}`);
@@ -1064,6 +1064,10 @@ exports.getUniqueCustomers = async (filters = {}) => {
           { "customer.email": { $exists: true, $nin: ["", "No email", "No Email", null] } }
         ]
       });
+    }
+
+    if (filters.branchId) {
+      matchQuery.branchId = new mongoose.Types.ObjectId(filters.branchId);
     }
 
     pipeline.push({ $match: matchQuery });

@@ -130,8 +130,9 @@ exports.getDashboardMetrics = async (req, res) => {
 
 exports.getUniqueCustomers = async (req, res) => {
   try {
+    const activeBranchId = req.activeBranchId || req.query.branchId;
     const { date } = req.query;
-    const customers = await orderService.getUniqueCustomers({ date });
+    const customers = await orderService.getUniqueCustomers({ date, branchId: activeBranchId });
     res.status(200).json({ success: true, data: customers });
   } catch (error) {
     handleError(res, error, 500);
@@ -362,6 +363,17 @@ exports.downloadSalesSummaryPdf = async (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename=sales-summary-${fileDateStr}.pdf`);
 
     await receiptPdfService.generateSalesSummaryReceiptPdf(summary, fileDateStr, res, activeBranchId);
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+exports.getNextOrderNumber = async (req, res) => {
+  try {
+    const { type, branchId } = req.query;
+    const activeBranchId = req.activeBranchId || branchId;
+    const nextNumber = await orderService.getNextOrderNumber(type, activeBranchId);
+    res.status(200).json({ success: true, data: nextNumber });
   } catch (error) {
     handleError(res, error, 500);
   }

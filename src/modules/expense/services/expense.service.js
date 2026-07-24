@@ -1,4 +1,5 @@
 const Expense = require('../models/expense.model');
+const mongoose = require('mongoose');
 const logger = require('../../../shared/utils/logger');
 
 exports.createExpense = async (expenseData) => {
@@ -15,6 +16,9 @@ exports.createExpense = async (expenseData) => {
 exports.getExpenses = async (filters = {}) => {
   try {
     const query = {};
+    if (filters.branchId) {
+      query.branchId = new mongoose.Types.ObjectId(filters.branchId);
+    }
     if (filters.date) {
       const dateStr = String(filters.date).split('T')[0];
       const parts = dateStr.split('-');
@@ -23,9 +27,6 @@ exports.getExpenses = async (filters = {}) => {
         const end = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 23, 59, 59, 999));
         query.expenseDate = { $gte: start, $lte: end };
       }
-    }
-    if (filters.branchId) {
-      query.branchId = filters.branchId;
     }
     if (filters.employeeName) {
       query.employeeName = { $regex: filters.employeeName, $options: 'i' };

@@ -98,7 +98,8 @@ exports.getProducts = async (req, res) => {
 
 exports.getBranchProductsList = async (req, res) => {
   try {
-    const products = await menuService.getBranchProductsList();
+    const branchId = req.activeBranchId || req.query.branchId;
+    const products = await menuService.getBranchProductsList(branchId);
     res.status(200).json({ success: true, data: products });
   } catch (error) {
     handleError(res, error, 500);
@@ -109,10 +110,11 @@ exports.toggleProductActive = async (req, res) => {
   try {
     const { id } = req.params;
     const { isActive } = req.body;
+    const branchId = req.activeBranchId || req.body.branchId || req.query.branchId;
     if (isActive === undefined) {
       return res.status(400).json({ success: false, message: 'isActive status is required.' });
     }
-    const product = await menuService.toggleProductActive(id, isActive);
+    const product = await menuService.toggleProductActive(id, isActive, branchId);
     res.status(200).json({ success: true, data: product });
   } catch (error) {
     handleError(res, error, 400);
@@ -123,10 +125,11 @@ exports.toggleProductStock = async (req, res) => {
   try {
     const { id } = req.params;
     const { isOutOfStock } = req.body;
+    const branchId = req.activeBranchId || req.body.branchId || req.query.branchId;
     if (isOutOfStock === undefined) {
       return res.status(400).json({ success: false, message: 'isOutOfStock status is required.' });
     }
-    const product = await menuService.toggleProductStock(id, isOutOfStock);
+    const product = await menuService.toggleProductStock(id, isOutOfStock, branchId);
     res.status(200).json({ success: true, data: product });
   } catch (error) {
     handleError(res, error, 400);
