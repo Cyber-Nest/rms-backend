@@ -94,6 +94,7 @@ const { initPromoModule } = require("./modules/promo");
 const { initExpenseModule } = require("./modules/expense");
 const { initPaymentModule } = require("./modules/payment");
 const { initDeliveryModule } = require("./modules/delivery");
+const { initEmployeeModule } = require("./modules/employee");
 
 initCompanyModule(app);
 initMenuModule(app);
@@ -102,6 +103,7 @@ initPromoModule(app);
 initExpenseModule(app);
 initPaymentModule(app);
 initDeliveryModule(app);
+initEmployeeModule(app);
 
 
 app.get("/api/health", (req, res) => {
