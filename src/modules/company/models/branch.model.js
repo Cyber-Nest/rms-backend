@@ -54,6 +54,10 @@ const branchSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    qrCodePayload: {
+      type: String,
+      default: "",
+    },
     settings: {
       mainSettings: {
         timezone: { type: String, default: 'Mountain Standard Time (MST) - America/Edmonton' },
@@ -118,8 +122,17 @@ const branchSchema = new mongoose.Schema(
 branchSchema.index({ code: 1 }, { unique: true });
 branchSchema.index({ email: 1 }, { unique: true });
 
-// Hash password before saving if modified
+// Hash password and ensure QR payload before saving
 branchSchema.pre("save", async function () {
+  if (!this.qrCodePayload) {
+    this.qrCodePayload = JSON.stringify({
+      type: "BRANCH_PAIRING_QR",
+      branchId: String(this._id),
+      branchName: this.name,
+      branchCode: this.code,
+    });
+  }
+
   if (!this.isModified("password")) return;
   try {
     const salt = await bcrypt.genSalt(10);

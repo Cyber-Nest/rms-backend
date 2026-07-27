@@ -23,7 +23,29 @@ exports.createBranch = async (branchData) => {
   return await branch.save();
 };
 
+exports.ensureBranchQrCodes = async () => {
+  try {
+    const unseededBranches = await Branch.find({
+      $or: [{ qrCodePayload: { $exists: false } }, { qrCodePayload: "" }, { qrCodePayload: null }],
+    });
+    if (unseededBranches.length === 0) return;
+
+    for (const b of unseededBranches) {
+      b.qrCodePayload = JSON.stringify({
+        type: "BRANCH_PAIRING_QR",
+        branchId: String(b._id),
+        branchName: b.name,
+        branchCode: b.code,
+      });
+      await b.save();
+    }
+  } catch (err) {
+    console.error("Error generating branch QR codes:", err.message);
+  }
+};
+
 exports.getAllBranches = async (query = {}) => {
+  await exports.ensureBranchQrCodes();
   const filter = {};
   if (query.isActive !== undefined) {
     filter.isActive = query.isActive === "true" || query.isActive === true;
@@ -35,6 +57,15 @@ exports.getBranchById = async (id) => {
   const branch = await Branch.findById(id);
   if (!branch) {
     throw new Error("Branch not found");
+  }
+  if (!branch.qrCodePayload) {
+    branch.qrCodePayload = JSON.stringify({
+      type: "BRANCH_PAIRING_QR",
+      branchId: String(branch._id),
+      branchName: branch.name,
+      branchCode: branch.code,
+    });
+    await branch.save();
   }
   return branch;
 };

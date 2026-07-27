@@ -2,6 +2,9 @@ const Driver = require("../models/Driver.model");
 const DeliveryAssignment = require("../models/DeliveryAssignment.model");
 const Vehicle = require("../models/Vehicle.model");
 const Order = require("../../order/models/order.model");
+const Attendance = require("../../employee/models/attendance.model");
+const Employee = require("../../employee/models/employee.model");
+
 const logger = require("../../../shared/utils/logger");
 const {
   authenticateChannel,
@@ -461,25 +464,106 @@ exports.unassignVehicle = async (req, res) => {
   }
 };
 
-// ─── DRIVER APP APIs ───
 /**
- * POST: Driver login with driverId + password. (plan password)
+ * POST: Driver login with driverId + password.
  */
 exports.driverLogin = async (req, res) => {
   try {
-    const { driverId, password } = req.body;
+    const { driverId, password, branchId } = req.body;
     if (!driverId || !password) {
       return res.status(400).json({ success: false, message: "driverId and password are required." });
     }
 
-    const driver = await Driver.findOne({ driverId }).lean();
-    if (!driver) {
-      return res.status(401).json({ success: false, message: "Invalid driver ID." });
+    const cleanDriverId = driverId.trim().toUpperCase();
+    const cleanPin = password.trim();
+
+    // 1. Find Employee for this specific branch
+    let employee = null;
+    if (branchId) {
+      employee = await Employee.findOne({
+        branchId,
+        $or: [
+          { employeeId: cleanDriverId },
+          { phone: cleanDriverId },
+        ],
+        isActive: true,
+      });
     }
 
-    // V1: Plain text comparison (no bcrypt)
-    if (driver.password !== password) {
-      return res.status(401).json({ success: false, message: "Invalid password." });
+    // 2. Find Driver record for this specific branch
+    let driver = null;
+    if (branchId) {
+      driver = await Driver.findOne({
+        restaurantId: String(branchId),
+        $or: [
+          { driverId: cleanDriverId },
+          ...(employee?.driverRef ? [{ _id: employee.driverRef }] : []),
+        ],
+      });
+    }
+
+    // Fallback if no branchId was sent
+    if (!driver) {
+      driver = await Driver.findOne({ driverId: cleanDriverId });
+    }
+
+    if (!employee && driver?.driverRef) {
+      employee = await Employee.findById(driver.driverRef);
+    }
+
+    if (!driver && !employee) {
+      return res.status(401).json({ success: false, message: "Driver ID is not registered for this restaurant branch." });
+    }
+
+    // Verify password / PIN
+    let isPasswordValid = false;
+    if (driver && driver.password === cleanPin) {
+      isPasswordValid = true;
+    } else if (employee) {
+      isPasswordValid = await employee.comparePin(cleanPin);
+    }
+
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: "Invalid 4-digit PIN / password." });
+    }
+
+    // Ensure driver record exists
+    const targetBranchId = branchId || driver?.restaurantId || employee?.branchId;
+    if (!driver && employee) {
+      // Create Driver model linked to employee if missing
+      driver = new Driver({
+        driverId: employee.employeeId,
+        name: employee.name,
+        phone: employee.phone || "",
+        password: cleanPin,
+        restaurantId: String(targetBranchId),
+        status: "available",
+      });
+      await driver.save();
+      employee.driverRef = driver._id;
+      await employee.save();
+    }
+
+    // ── MANDATORY POS CHECK-IN VERIFICATION ──
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    if (employee) {
+      const todayAttendance = await Attendance.findOne({
+        branchId: targetBranchId,
+        employeeId: employee._id,
+        date: todayStr,
+      })
+        .select("status")
+        .lean();
+
+      if (!todayAttendance || (todayAttendance.status !== "checked-in" && todayAttendance.status !== "on-break")) {
+        return res.status(403).json({
+          success: false,
+          code: "CHECK_IN_REQUIRED",
+          message: "Please check-in first at the POS system before accessing Driver Web.",
+        });
+      }
     }
 
     // Check if the driver has active assignments to recover their state
@@ -731,7 +815,38 @@ exports.getDriverById = async (req, res) => {
     if (!driver) {
       return res.status(404).json({ success: false, message: "Driver not found." });
     }
-    
+
+    // Check today's POS attendance status
+    let posCheckedIn = true;
+    try {
+      const employee = await Employee.findOne({
+        branchId: driver.restaurantId,
+        $or: [
+          ...(driver.driverRef ? [{ _id: driver.driverRef }] : []),
+          { employeeId: driver.driverId },
+        ],
+        isActive: true,
+      })
+        .select("_id branchId")
+        .lean();
+
+      if (employee) {
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        const att = await Attendance.findOne({
+          branchId: employee.branchId,
+          employeeId: employee._id,
+          date: todayStr,
+        })
+          .select("status")
+          .lean();
+
+        if (!att || att.status === "checked-out") {
+          posCheckedIn = false;
+        }
+      }
+    } catch (e) {}
+
     let assignedVehicle = null;
     if (driver.assignedVehicleId) {
       assignedVehicle = driver.assignedVehicleId;
@@ -745,7 +860,8 @@ exports.getDriverById = async (req, res) => {
         name: driver.name,
         phone: driver.phone,
         color: driver.color,
-        status: driver.status,
+        status: posCheckedIn ? driver.status : "offline",
+        posCheckedIn,
         restaurantId: driver.restaurantId,
         assignedVehicle: assignedVehicle
           ? {

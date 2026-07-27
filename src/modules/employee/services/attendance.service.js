@@ -1,5 +1,6 @@
 const Attendance = require("../models/attendance.model");
 const Employee = require("../models/employee.model");
+const Driver = require("../../delivery/models/Driver.model");
 
 const getTodayDateStr = () => {
   const now = new Date();
@@ -174,6 +175,29 @@ exports.checkOut = async (branchId, employeeId) => {
 
   attendance.status = "checked-out";
   await attendance.save();
+
+  // If employee is a driver, automatically update Driver model status to offline and trigger Pusher event
+  try {
+    const Driver = require("../../delivery/models/Driver.model");
+    const { triggerDriverStatusChange } = require("../../../config/pusher");
+
+    if (employee.role === "driver" || employee.driverRef) {
+      const driverFilter = employee.driverRef
+        ? { _id: employee.driverRef }
+        : { driverId: employee.employeeId };
+      const updatedDriver = await Driver.findOneAndUpdate(driverFilter, { status: "offline" }, { new: true });
+      if (updatedDriver) {
+        try {
+          await triggerDriverStatusChange(String(branchId), {
+            driverId: updatedDriver._id.toString(),
+            status: "offline",
+          });
+        } catch (pe) {}
+      }
+    }
+  } catch (err) {
+    console.warn("Could not set driver status offline on checkout:", err.message);
+  }
 
   return exports.getAttendanceWithEmployee(attendance._id);
 };
