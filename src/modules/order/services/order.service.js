@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Order = require("../models/order.model");
 const Product = require("../../menu/models/product.model");
 const Category = require("../../menu/models/category.model");
@@ -17,29 +18,33 @@ const round2 = (num) => {
 };
 
 const buildDateFilter = (start, end, baseFilter = {}) => {
+  const normBase = { ...baseFilter };
+  if (normBase.branchId && typeof normBase.branchId === "string" && mongoose.Types.ObjectId.isValid(normBase.branchId)) {
+    normBase.branchId = new mongoose.Types.ObjectId(normBase.branchId);
+  }
   if (start && end) {
     return {
       $or: [
-        { ...baseFilter, orderTiming: { $ne: "later" }, createdAt: { $gte: start, $lte: end } },
-        { ...baseFilter, orderTiming: "later", scheduledAt: { $gte: start, $lte: end } }
+        { ...normBase, orderTiming: { $ne: "later" }, createdAt: { $gte: start, $lte: end } },
+        { ...normBase, orderTiming: "later", scheduledAt: { $gte: start, $lte: end } }
       ]
     };
   } else if (start) {
     return {
       $or: [
-        { ...baseFilter, orderTiming: { $ne: "later" }, createdAt: { $gte: start } },
-        { ...baseFilter, orderTiming: "later", scheduledAt: { $gte: start } }
+        { ...normBase, orderTiming: { $ne: "later" }, createdAt: { $gte: start } },
+        { ...normBase, orderTiming: "later", scheduledAt: { $gte: start } }
       ]
     };
   } else if (end) {
     return {
       $or: [
-        { ...baseFilter, orderTiming: { $ne: "later" }, createdAt: { $lte: end } },
-        { ...baseFilter, orderTiming: "later", scheduledAt: { $lte: end } }
+        { ...normBase, orderTiming: { $ne: "later" }, createdAt: { $lte: end } },
+        { ...normBase, orderTiming: "later", scheduledAt: { $lte: end } }
       ]
     };
   }
-  return baseFilter;
+  return normBase;
 };
 
 let productLookupCache = null;
@@ -97,6 +102,7 @@ exports.createOrder = async (orderData) => {
     const orderNumber = await Order.generateOrderNumber(
       orderData.orderType,
       orderData.orderTiming === "later" ? orderData.scheduledAt : null,
+      orderData.branchId || null,
     );
 
     // If pay-later → paymentStatus = unpaid, no payments array needed
@@ -138,7 +144,20 @@ exports.createOrder = async (orderData) => {
       if (orderData.orderTiming === "later" && orderData.scheduledAt) {
         dueAt = new Date(orderData.scheduledAt);
       } else {
-        dueAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins default
+        let prepTimeMinutes = 15;
+        try {
+          let b = null;
+          if (orderData.branchId) {
+            b = await Branch.findById(orderData.branchId).select("settings").lean();
+          }
+          if (!b) {
+            b = await Branch.findOne().select("settings").lean();
+          }
+          if (b?.settings?.mainSettings?.defaultTimeMinutes) {
+            prepTimeMinutes = Number(b.settings.mainSettings.defaultTimeMinutes) || 15;
+          }
+        } catch (e) {}
+        dueAt = new Date(Date.now() + prepTimeMinutes * 60 * 1000);
       }
     }
 
@@ -187,7 +206,7 @@ exports.createOrder = async (orderData) => {
       await paymentDoc.save();
     }
 
-    logger.info(`Order created: ${orderNumber}`);
+    logger.info(`Order created: ${orderNumber} for branch: ${order.branchName || 'Main'}`);
     return order;
   } catch (error) {
     logger.error(`Order Service Error: createOrder - ${error.message}`);
@@ -199,6 +218,10 @@ exports.createOrder = async (orderData) => {
 exports.getAllOrders = async (filters = {}) => {
   try {
     let query = {};
+
+    if (filters.branchId) {
+      query.branchId = filters.branchId;
+    }
 
     if (filters.status) {
       if (typeof filters.status === 'string' && filters.status.includes(',')) {
@@ -476,9 +499,9 @@ exports.cancelOrder = async (id) => {
 };
 
 // ── Get Next Order Number ──────────────────────────────────────
-exports.getNextOrderNumber = async (orderType) => {
+exports.getNextOrderNumber = async (orderType, branchId = null) => {
   try {
-    const nextNumber = await Order.previewNextOrderNumber(orderType);
+    const nextNumber = await Order.previewNextOrderNumber(orderType, branchId);
     return nextNumber;
   } catch (error) {
     logger.error(`Order Service Error: getNextOrderNumber - ${error.message}`);
@@ -560,7 +583,8 @@ exports.getSalesSummary = async (filters = {}) => {
       end = getLocalEndOfDay(filters.date);
     }
 
-    const dateFilter = buildDateFilter(start, end);
+    const baseFilter = filters.branchId ? { branchId: filters.branchId } : {};
+    const dateFilter = buildDateFilter(start, end, baseFilter);
     Object.assign(query, dateFilter);
 
     // Retrieve only necessary fields via database query projection
@@ -703,6 +727,7 @@ exports.getSalesSummary = async (filters = {}) => {
     const rawExpenses = [];
     try {
       const expQuery = {};
+      if (filters.branchId) expQuery.branchId = filters.branchId;
       if (targetDateStr) {
         const parts = targetDateStr.split("-");
         if (parts.length === 3) {
@@ -846,15 +871,17 @@ exports.getSalesSummary = async (filters = {}) => {
 
 exports.saveDeposit = async (depositData) => {
   try {
-    const { date, cashAmount, cardAmount, accountPayAmount } = depositData;
+    const { date, cashAmount, cardAmount, accountPayAmount, branchId } = depositData;
     if (!date) throw new Error("Deposit date is required.");
 
+    const query = { date, ...(branchId ? { branchId } : {}) };
     const deposit = await Deposit.findOneAndUpdate(
-      { date },
+      query,
       {
         cashAmount: cashAmount !== undefined ? cashAmount : 0,
         cardAmount: cardAmount !== undefined ? cardAmount : 0,
         accountPayAmount: accountPayAmount !== undefined ? accountPayAmount : 0,
+        ...(branchId ? { branchId } : {})
       },
       { returnDocument: "after", upsert: true }
     );
@@ -882,8 +909,12 @@ exports.getDashboardMetrics = async (filters = {}) => {
     const past30DateStr = past30Date.toISOString().slice(0, 10);
     const past30DaysStart = getLocalStartOfDay(past30DateStr);
 
-    const dateMatchFilter = buildDateFilter(past30DaysStart, todayEnd);
-    const todayDateFilter = buildDateFilter(todayStart, todayEnd);
+    const branchIdFilter = filters.branchId
+      ? { branchId: new mongoose.Types.ObjectId(filters.branchId) }
+      : {};
+
+    const dateMatchFilter = buildDateFilter(past30DaysStart, todayEnd, branchIdFilter);
+    const todayDateFilter = buildDateFilter(todayStart, todayEnd, branchIdFilter);
 
     // Single aggregation for today's metrics, popular days, and popular food
     const [aggResult] = await Order.aggregate([
@@ -1048,6 +1079,10 @@ exports.getUniqueCustomers = async (filters = {}) => {
       });
     }
 
+    if (filters.branchId) {
+      matchQuery.branchId = new mongoose.Types.ObjectId(filters.branchId);
+    }
+
     pipeline.push({ $match: matchQuery });
 
     pipeline.push({ $sort: { createdAt: -1 } });
@@ -1116,7 +1151,10 @@ exports.getReportsSummary = async (filters = {}) => {
         end = getLocalEndOfDay(filters.endDate);
       }
     }
-    const dateFilter = buildDateFilter(start, end);
+    const baseFilter = filters.branchId
+      ? { branchId: new mongoose.Types.ObjectId(filters.branchId) }
+      : {};
+    const dateFilter = buildDateFilter(start, end, baseFilter);
     
     // Get cached product lookup maps
     const { categoryMap: productCategoryMap } = await getProductLookups();
@@ -1356,6 +1394,7 @@ exports.getReportsSummary = async (filters = {}) => {
     const rawExpenses = [];
     try {
       const expQuery = {};
+      if (filters.branchId) expQuery.branchId = filters.branchId;
       if (start && end) {
         expQuery.expenseDate = { $gte: start, $lte: end };
       } else if (start) {
@@ -1456,14 +1495,17 @@ exports.getReportsSummary = async (filters = {}) => {
 };
 
 
-exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
+exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
   try {
     
     // Get cached product lookup maps
     const { categoryMap: productCategoryMap, idMap: productIDMap } = await getProductLookups();
 
     
-    const baseFilter = { status: { $ne: "cancelled" } };
+    const baseFilter = {
+      status: { $ne: "cancelled" },
+      ...(branchId ? { branchId } : {})
+    };
     let start, end;
     if (startDate && endDate) {
       start = getLocalStartOfDay(startDate);
@@ -1555,11 +1597,12 @@ exports.getItemSalesSummary = async ({ startDate, endDate } = {}) => {
 };
 
 // Get Hourly Sales Summary Report  ───────
-exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
+exports.getHourlySalesSummary = async ({ startDate, endDate, branchId } = {}) => {
   try {
     const TIMEZONE = "America/Edmonton";
     const baseFilter = { 
-      status: { $in: ["pending", "preparing", "ready", "completed"] } 
+      status: { $in: ["pending", "preparing", "ready", "completed"] },
+      ...(branchId ? { branchId } : {})
     };
     let start, end;
     if (startDate && endDate) {
@@ -1635,7 +1678,7 @@ exports.getHourlySalesSummary = async ({ startDate, endDate } = {}) => {
 };
 
 // ── Get Monthly Sales Summary Report ───────
-exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
+exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) => {
   try {
     const TIMEZONE = "America/Edmonton";
     let start, end;
@@ -1651,7 +1694,8 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
       end = getLocalEndOfDay(todayStr);
     }
 
-    const dateFilter = buildDateFilter(start, end);
+    const baseFilter = branchId ? { branchId } : {};
+    const dateFilter = buildDateFilter(start, end, baseFilter);
 
     //group all orders by business date with all needed metrics
     const [ordersByDayAgg, expensesRaw, depositsRaw] = await Promise.all([
@@ -1691,8 +1735,8 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate } = {}) => {
             orders: { $push: { total: "$total", payments: "$payments", orderSource: "$orderSource", status: "$status" } }
         }}
       ]),
-      Expense.find({ expenseDate: { $gte: start, $lte: end } }).lean(),
-      Deposit.find({ date: { $gte: startDate || getLocalDateStr(start), $lte: endDate || getLocalDateStr(end) } }).lean()
+      Expense.find({ expenseDate: { $gte: start, $lte: end }, ...(branchId ? { branchId } : {}) }).lean(),
+      Deposit.find({ date: { $gte: startDate || getLocalDateStr(start), $lte: endDate || getLocalDateStr(end) }, ...(branchId ? { branchId } : {}) }).lean()
     ]);
 
     // Build date-keyed Maps 

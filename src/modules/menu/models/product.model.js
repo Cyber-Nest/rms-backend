@@ -60,7 +60,15 @@ const productSchema = new mongoose.Schema({
     type: String,
     unique: true,
     sparse: true,
-  }
+  },
+  disabledBranches: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch'
+  }],
+  outOfStockBranches: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch'
+  }]
 }, {
   timestamps: true
 });
@@ -94,5 +102,7 @@ productSchema.index({ categoryId: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ name: 1 });
 productSchema.index({ isActive: 1, categoryId: 1 });
+productSchema.index({ disabledBranches: 1 });
+productSchema.index({ outOfStockBranches: 1 });
 
 module.exports = mongoose.model('Product', productSchema);

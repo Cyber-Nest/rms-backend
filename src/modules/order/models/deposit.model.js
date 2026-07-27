@@ -5,8 +5,13 @@ const depositSchema = new mongoose.Schema(
     date: {
       type: String,
       required: [true, 'Deposit date is required'],
-      unique: true,
-      index: true, 
+      index: true,
+    },
+    branchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Branch',
+      default: null,
+      index: true,
     },
     cashAmount: {
       type: Number,
@@ -26,5 +31,7 @@ const depositSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+depositSchema.index({ branchId: 1, date: 1 }, { unique: true });
 
 module.exports = mongoose.model('Deposit', depositSchema);
