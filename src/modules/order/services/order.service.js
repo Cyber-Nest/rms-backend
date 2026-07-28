@@ -173,6 +173,7 @@ exports.createOrder = async (orderData) => {
       paymentStatus,
       payments,
       dueAt,
+      tip: Number(orderData.tip) || 0,
       statusHistory: [{ status: "pending", changedAt: new Date() }],
     });
 
@@ -581,19 +582,45 @@ exports.getSalesSummary = async (filters = {}) => {
     } else if (filters.date) {
       start = getLocalStartOfDay(filters.date);
       end = getLocalEndOfDay(filters.date);
+    } else {
+      const todayStr = getLocalDateStr();
+      start = getLocalStartOfDay(todayStr);
+      end = getLocalEndOfDay(todayStr);
     }
 
     const baseFilter = filters.branchId ? { branchId: filters.branchId } : {};
     const dateFilter = buildDateFilter(start, end, baseFilter);
     Object.assign(query, dateFilter);
 
-    // Retrieve only necessary fields via database query projection
-    const orders = await Order.find(query)
-      .select("status total subtotal tax discount orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod")
-      .lean();
+    // Compute targetDateStr for deposit lookup
+    let targetDateStr = "";
+    if (filters.date) {
+      targetDateStr = String(filters.date).split("T")[0];
+    } else if (filters.startDate) {
+      targetDateStr = String(filters.startDate).split("T")[0];
+    } else {
+      targetDateStr = getLocalDateStr();
+    }
 
-    // Get cached product lookup maps
-    const { categoryMap: productCategoryMap } = await getProductLookups();
+    // ── Parallel fetch: orders + deposit + expenses + product lookups ──
+    const expQuery = { ...( filters.branchId ? { branchId: filters.branchId } : {}) };
+    if (start && end) {
+      expQuery.expenseDate = { $gte: start, $lte: end };
+    }
+
+    const [orders, deposit, expensesList, { categoryMap: productCategoryMap }] = await Promise.all([
+      Order.find(query)
+        .select("status tip total subtotal tax discount orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod")
+        .lean(),
+      Deposit.findOne({ date: targetDateStr }).lean(),
+      Expense.find(expQuery)
+        .select("paymentMode amount expenseType employeeName pst gst hst")
+        .lean()
+        .catch(() => []),
+      getProductLookups(),
+    ]);
+
+
 
     // 1. Completed & Cancelled Orders
     let completedCount = 0;
@@ -632,6 +659,7 @@ exports.getSalesSummary = async (filters = {}) => {
     let interacTotal = 0;
     let creditCardTotal = 0;
     let debitCardTotal = 0;
+    let totalTips = 0;
 
     
     for (const order of orders) {
@@ -646,6 +674,7 @@ exports.getSalesSummary = async (filters = {}) => {
         grossTax += order.tax || 0;
         grossDiscount += order.discount || 0;
         grandTotal += order.total || 0;
+        totalTips += order.tip || 0;
 
         
         if (order.orderType === "takeout") takeoutTotal += order.total;
@@ -710,65 +739,17 @@ exports.getSalesSummary = async (filters = {}) => {
       }
     }
 
-    
-    let targetDateStr = "";
-    if (filters.date) {
-      targetDateStr = String(filters.date).split("T")[0];
-    } else if (filters.startDate) {
-      targetDateStr = String(filters.startDate).split("T")[0];
-    } else {
-      targetDateStr = getLocalDateStr();
-    }
 
-    const deposit = await Deposit.findOne({ date: targetDateStr }).lean();
-
-    
     let totalCashExpense = 0;
     const rawExpenses = [];
-    try {
-      const expQuery = {};
-      if (filters.branchId) expQuery.branchId = filters.branchId;
-      if (targetDateStr) {
-        const parts = targetDateStr.split("-");
-        if (parts.length === 3) {
-          const start = new Date(
-            Date.UTC(
-              Number(parts[0]),
-              Number(parts[1]) - 1,
-              Number(parts[2]),
-              0,
-              0,
-              0,
-              0,
-            ),
-          );
-          const end = new Date(
-            Date.UTC(
-              Number(parts[0]),
-              Number(parts[1]) - 1,
-              Number(parts[2]),
-              23,
-              59,
-              59,
-              999,
-            ),
-          );
-          expQuery.expenseDate = { $gte: start, $lte: end };
-        }
+    for (const e of (expensesList || [])) {
+      rawExpenses.push(e);
+      if (e.paymentMode !== "card") {
+        totalCashExpense += e.amount || 0;
       }
-      const expensesList = await Expense.find(expQuery)
-        .select("paymentMode amount expenseType employeeName pst gst hst")
-        .lean();
-      
-      for (const e of expensesList) {
-        rawExpenses.push(e);
-        if (e.paymentMode !== "card") {
-          totalCashExpense += e.amount || 0;
-        }
-      }
-    } catch (err) {
-      logger.warn(`Could not query daily expenses: ${err.message}`);
     }
+
+
 
     
     const adjustedExpectedCash = Math.max(0, cashTotal - totalCashExpense);
@@ -800,7 +781,7 @@ exports.getSalesSummary = async (filters = {}) => {
         discount: round2(grossDiscount),
         tax: round2(grossTax),
         grandTotal: round2(grandTotal),
-        tips: 0,
+        tips: round2(totalTips),
         finalAmount: round2(grandTotal),
       },
       categorySales: Object.entries(categorySales).map(([name, total]) => ({
@@ -818,7 +799,7 @@ exports.getSalesSummary = async (filters = {}) => {
         creditCardSales: round2(creditCardTotal),
         debitCardSales: round2(debitCardTotal),
         grandTotal: round2(grandTotal),
-        tips: 0,
+        tips: round2(totalTips),
         finalAmount: round2(grandTotal),
       },
       cardTypeReceived: {
