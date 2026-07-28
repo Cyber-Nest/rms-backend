@@ -36,7 +36,7 @@ const employeeSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["manager", "driver", "cashier", "chef", "crew-member"],
+      enum: ["manager", "supervisor", "driver", "cashier", "chef", "crew-member"],
       required: [true, "Role is required"],
     },
     pin: {

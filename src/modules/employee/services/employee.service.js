@@ -11,14 +11,14 @@ const getTodayDateStr = () => {
   return `${year}-${month}-${day}`;
 };
 
-// Generate next Employee ID for a branch: EMP-001, EMP-002, etc.
+// Generate next Employee ID for a branch: 001, 002, 003, etc.
 const generateNextEmployeeId = async (branchId) => {
   const employees = await Employee.find({ branchId }).select("employeeId").lean();
   let maxSeq = 0;
   
   employees.forEach((emp) => {
-    if (emp.employeeId && emp.employeeId.startsWith("EMP-")) {
-      const seqStr = emp.employeeId.replace("EMP-", "");
+    if (emp.employeeId) {
+      const seqStr = String(emp.employeeId).replace(/^EMP-?/i, "").trim();
       const seq = parseInt(seqStr, 10);
       if (!isNaN(seq) && seq > maxSeq) {
         maxSeq = seq;
@@ -27,7 +27,7 @@ const generateNextEmployeeId = async (branchId) => {
   });
 
   const nextSeq = maxSeq + 1;
-  return `EMP-${String(nextSeq).padStart(3, "0")}`;
+  return String(nextSeq).padStart(3, "0");
 };
 
 exports.createEmployee = async (branchId, employeeData) => {
