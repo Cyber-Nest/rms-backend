@@ -34,6 +34,22 @@ exports.getAllBranches = async (req, res) => {
   }
 };
 
+exports.getPublicBranches = async (req, res) => {
+  try {
+    const branches = await branchService.getPublicBranches();
+    res.status(200).json({
+      success: true,
+      data: branches,
+    });
+  } catch (error) {
+    logger.error(`Error fetching public branches: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 exports.getBranchById = async (req, res) => {
   try {
     const branch = await branchService.getBranchById(req.params.id);

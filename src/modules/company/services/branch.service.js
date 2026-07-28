@@ -53,6 +53,14 @@ exports.getAllBranches = async (query = {}) => {
   return await Branch.find(filter).sort({ createdAt: -1 });
 };
 
+exports.getPublicBranches = async () => {
+  await exports.ensureBranchQrCodes();
+  return await Branch.find({ isActive: true })
+    .select("name code address phone email openingHours isActive qrCodePayload")
+    .sort({ name: 1 })
+    .lean();
+};
+
 exports.getBranchById = async (id) => {
   const branch = await Branch.findById(id);
   if (!branch) {

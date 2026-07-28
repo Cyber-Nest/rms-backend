@@ -7,6 +7,7 @@ router.get("/branches/me", protectBranch, branchController.getMe);
 router.get("/branches/settings", branchController.getBranchSettings);
 router.patch("/branches/settings", branchController.updateBranchSettings);
 router.post("/branches", branchController.createBranch);
+router.get("/branches/public", branchController.getPublicBranches);
 router.get("/branches", branchController.getAllBranches);
 router.get("/branches/:id", branchController.getBranchById);
 router.patch("/branches/:id", branchController.updateBranch);
