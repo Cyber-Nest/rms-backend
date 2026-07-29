@@ -98,6 +98,9 @@ exports.createEmployee = async (branchId, employeeData) => {
     role,
     pin: cleanPin, // Pre-save hook will hash this
     driverRef,
+    ...(employeeData.permissions && typeof employeeData.permissions === "object"
+      ? { permissions: employeeData.permissions }
+      : {}),
   });
 
   await employee.save();
@@ -190,6 +193,9 @@ exports.updateEmployee = async (branchId, id, updateData) => {
 
   if (updateData.address !== undefined) employee.address = updateData.address.trim();
   if (updateData.isActive !== undefined) employee.isActive = Boolean(updateData.isActive);
+  if (updateData.permissions && typeof updateData.permissions === "object") {
+    employee.permissions = { ...employee.permissions, ...updateData.permissions };
+  }
 
   if (updateData.pin !== undefined && updateData.pin !== "") {
     const cleanPin = String(updateData.pin).trim();
