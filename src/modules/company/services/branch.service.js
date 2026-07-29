@@ -65,7 +65,7 @@ exports.getPublicBranches = async () => {
   await exports.ensureBranchQrCodes();
   return await Branch.find({ isActive: true })
     .select(
-      "name code address phone email isActive settings.mainSettings.isEmergencyClosed settings.storeTimings",
+      "name code address phone email isActive settings.mainSettings.isEmergencyClosed settings.storeTimings settings.taxFeesSettings",
     )
     .sort({ name: 1 })
     .lean();
