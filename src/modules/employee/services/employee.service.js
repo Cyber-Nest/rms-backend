@@ -255,6 +255,42 @@ exports.deleteEmployee = async (branchId, id) => {
   return { message: "Employee deactivated successfully" };
 };
 
+const VALID_PERMISSION_KEYS = [
+  // Separate route pages
+  "pos", "kitchen", "reception_view", "delivery", "driver_drop",
+  "vehicles", "customers", "employees", "menus", "setting",
+  // /employee/orders sub-tabs
+  "dashboard", "orders", "sales_summary", "expense_payout", "reports",
+  "item_sales", "hourly_sales", "cash_out_summary",
+  "monthly_sales_summary", "failed_transaction", "refund_orders",
+];
+
+exports.updatePermissions = async (branchId, id, permissions) => {
+  if (!branchId) throw new Error("Branch ID is required");
+  if (!permissions || typeof permissions !== "object") {
+    throw new Error("Permissions object is required");
+  }
+
+  const employee = await Employee.findOne({ _id: id, branchId });
+  if (!employee) throw new Error("Employee not found");
+
+  // Build $set payload — only accept known keys
+  const $set = {};
+  for (const key of VALID_PERMISSION_KEYS) {
+    if (key in permissions) {
+      $set[`permissions.${key}`] = Boolean(permissions[key]);
+    }
+  }
+
+  const updated = await Employee.findByIdAndUpdate(
+    id,
+    { $set },
+    { new: true }
+  ).select("-pin").lean();
+
+  return updated;
+};
+
 exports.verifyEmployeePin = async (branchId, employeeId, pin) => {
   if (!branchId || !employeeId || !pin) {
     throw new Error("Branch ID, Employee ID, and PIN are required");

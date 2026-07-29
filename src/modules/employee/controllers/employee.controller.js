@@ -98,6 +98,25 @@ exports.deleteEmployee = async (req, res) => {
   }
 };
 
+exports.updatePermissions = async (req, res) => {
+  try {
+    const branchId = getBranchIdFromReq(req);
+    const { permissions } = req.body;
+    const updated = await employeeService.updatePermissions(branchId, req.params.id, permissions);
+    res.status(200).json({
+      success: true,
+      message: "Permissions updated successfully",
+      data: updated,
+    });
+  } catch (error) {
+    logger.error(`Error updating permissions: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 exports.verifyPin = async (req, res) => {
   try {
     const branchId = getBranchIdFromReq(req);
