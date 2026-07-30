@@ -5,6 +5,9 @@ const getBranchIdFromReq = (req) => {
   return (
     req.query.branchId ||
     req.body.branchId ||
+    req.headers["x-branch-id"] ||
+    req.headers["branchid"] ||
+    req.headers["x-branchid"] ||
     req.activeBranchId ||
     req.branch?.branchId ||
     req.branch?._id
@@ -129,6 +132,25 @@ exports.verifyPin = async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error verifying employee PIN: ${error.message}`);
+    res.status(401).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.loginAsCode = async (req, res) => {
+  try {
+    const branchId = getBranchIdFromReq(req);
+    const { employeeId, pin } = req.body;
+    const result = await employeeService.loginAsCode(branchId, employeeId, pin);
+    res.status(200).json({
+      success: true,
+      message: "Terminal logged in successfully",
+      data: result,
+    });
+  } catch (error) {
+    logger.error(`Error in loginAsCode: ${error.message}`);
     res.status(401).json({
       success: false,
       message: error.message,

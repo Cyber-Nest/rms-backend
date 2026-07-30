@@ -14,6 +14,9 @@ router.patch("/employees/:id/permissions", employeeController.updatePermissions)
 // PIN Verification for Check-In/Out modal
 router.post("/employees/verify-pin", employeeController.verifyPin);
 
+// Terminal Session Login As Code
+router.post("/employees/login-code", employeeController.loginAsCode);
+
 // Attendance Actions
 router.post("/attendance/check-in", attendanceController.checkIn);
 router.post("/attendance/break-in", attendanceController.breakIn);

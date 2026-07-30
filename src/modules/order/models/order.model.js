@@ -146,6 +146,7 @@ const orderSchema = new mongoose.Schema(
     customer: { type: customerSchema, default: null },
 
     notes: { type: String, default: "" },
+    placedBy: { type: String, default: "" },
 
     status: {
       type: String,
@@ -165,6 +166,7 @@ const orderSchema = new mongoose.Schema(
         status: String,
         changedAt: { type: Date, default: Date.now },
         note: String,
+        userName: String,
       },
     ],
   },

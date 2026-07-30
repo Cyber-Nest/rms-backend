@@ -174,7 +174,12 @@ exports.createOrder = async (orderData) => {
       payments,
       dueAt,
       tip: Number(orderData.tip) || 0,
-      statusHistory: [{ status: "pending", changedAt: new Date() }],
+      statusHistory: [{
+        status: "pending",
+        changedAt: new Date(),
+        note: "New order placed",
+        userName: orderData.placedBy || "Manager",
+      }],
     });
 
     await order.save();
@@ -344,10 +349,10 @@ exports.getOrderById = async (id) => {
 };
 
 // ── Update Order Status ───────────────────────────────────────
-exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = undefined) => {
+exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = undefined, userName = "Manager") => {
   try {
     const validTransitions = {
-      pending: ["preparing", "cancelled"],
+      pending: ["preparing", "ready", "cancelled"],
       preparing: ["ready", "cancelled"],
       ready: ["completed", "cancelled"],
       completed: [],
@@ -363,7 +368,7 @@ exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = u
         order.receptionCompleted = receptionCompleted;
       }
       if (note) {
-        order.statusHistory.push({ status, changedAt: new Date(), note });
+        order.statusHistory.push({ status, changedAt: new Date(), note, userName });
       }
       await order.save();
 
@@ -387,7 +392,7 @@ exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = u
     if (receptionCompleted !== undefined) {
       order.receptionCompleted = receptionCompleted;
     }
-    order.statusHistory.push({ status, changedAt: new Date(), note });
+    order.statusHistory.push({ status, changedAt: new Date(), note, userName });
     await order.save();
 
     // Trigger real-time notification via Pusher
@@ -404,14 +409,14 @@ exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = u
 };
 
 // ── Clear from Kitchen ────────────────────────────────────────
-exports.kitchenClear = async (id) => {
+exports.kitchenClear = async (id, userName = "Manager") => {
   try {
     const order = await Order.findById(id);
     if (!order) throw new Error("Order not found.");
 
     if (!order.kitchenCleared) {
       order.kitchenCleared = true;
-      order.statusHistory.push({ status: order.status, changedAt: new Date(), note: "Cleared from kitchen (Handed over)" });
+      order.statusHistory.push({ status: order.status, changedAt: new Date(), note: "Cleared from kitchen (Handed over)", userName });
       await order.save();
 
       // Trigger real-time notification via Pusher

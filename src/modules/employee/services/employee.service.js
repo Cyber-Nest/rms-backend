@@ -353,3 +353,36 @@ exports.verifyEmployeePin = async (branchId, employeeId, pin) => {
     },
   };
 };
+
+exports.loginAsCode = async (branchId, employeeId, pin) => {
+  if (!branchId || !employeeId || !pin) {
+    throw new Error("Branch ID, Employee ID, and PIN are required");
+  }
+
+  const cleanPin = String(pin).trim();
+  if (!/^\d{4}$/.test(cleanPin)) {
+    throw new Error("PIN must be exactly 4 digits");
+  }
+
+  const employee = await Employee.findOne({
+    branchId,
+    employeeId: employeeId.trim().toUpperCase(),
+    isActive: true,
+  });
+
+  if (!employee) {
+    throw new Error("Employee not found or inactive");
+  }
+
+  const isMatch = await employee.comparePin(cleanPin);
+  if (!isMatch) {
+    throw new Error("Invalid 4-digit PIN");
+  }
+
+  const empObj = employee.toObject();
+  delete empObj.pin;
+
+  return {
+    employee: empObj,
+  };
+};
