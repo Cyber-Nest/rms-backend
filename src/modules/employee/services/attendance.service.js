@@ -1,6 +1,9 @@
 const Attendance = require("../models/attendance.model");
 const Employee = require("../models/employee.model");
 const Driver = require("../../delivery/models/Driver.model");
+const Vehicle = require("../../delivery/models/Vehicle.model");
+
+const { triggerDriverStatusChange } = require("../../../config/pusher");
 
 const getTodayDateStr = () => {
   const now = new Date();
@@ -176,20 +179,35 @@ exports.checkOut = async (branchId, employeeId) => {
   attendance.status = "checked-out";
   await attendance.save();
 
-  // If employee is a driver, automatically update Driver model status to offline and trigger Pusher event
+  // If employee is a driver, automatically update Driver model status to offline and unassign vehicle
   try {
-    const Driver = require("../../delivery/models/Driver.model");
-    const { triggerDriverStatusChange } = require("../../../config/pusher");
+    const employee = await Employee.findOne({ _id: employeeId, branchId }).select("role driverRef employeeId").lean();
 
-    if (employee.role === "driver" || employee.driverRef) {
+    if (employee && (employee.role === "driver" || employee.driverRef)) {
+
       const driverFilter = employee.driverRef
         ? { _id: employee.driverRef }
         : { driverId: employee.employeeId };
-      const updatedDriver = await Driver.findOneAndUpdate(driverFilter, { status: "offline" }, { new: true });
-      if (updatedDriver) {
+
+      const driverDoc = await Driver.findOne(driverFilter);
+      if (driverDoc) {
+        // Auto-unassign vehicle if assigned
+        if (driverDoc.assignedVehicleId) {
+          await Vehicle.findByIdAndUpdate(driverDoc.assignedVehicleId, {
+            isAssigned: false,
+            assignedDriverId: null,
+          });
+        }
+
+        // Set driver offline, unassign vehicle, clear active orders
+        driverDoc.status = "offline";
+        driverDoc.assignedVehicleId = null;
+        driverDoc.activeOrderIds = [];
+        await driverDoc.save();
+
         try {
           await triggerDriverStatusChange(String(branchId), {
-            driverId: updatedDriver._id.toString(),
+            driverId: driverDoc._id.toString(),
             status: "offline",
           });
         } catch (pe) {}

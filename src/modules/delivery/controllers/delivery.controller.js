@@ -77,14 +77,16 @@ exports.pusherAuth = async (req, res) => {
 exports.getDeliveryOrders = async (req, res) => {
   try {
     const { status } = req.query;
+    const restaurantId = getRestaurantIdFromReq(req);
 
-    // Get today's start and end 
+    // Get today's start and end
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
     const query = {
       orderType: "delivery",
+      branchId: restaurantId,
       $or: [
         {
           orderTiming: "now",
@@ -97,18 +99,22 @@ exports.getDeliveryOrders = async (req, res) => {
         {
           orderTiming: { $exists: false },
           createdAt: { $gte: startOfDay, $lte: endOfDay },
-        }
+        },
+        //active undelivered orders from previous days
+        {
+          status: { $in: ["pending", "preparing", "ready"] },
+        },
       ]
     };
 
     const orders = await Order.find(query)
-      .select("_id orderNumber customer status paymentStatus orderType total orderTiming scheduledAt createdAt dueAt")
+      .select("_id orderNumber customer status paymentStatus orderType total orderTiming scheduledAt createdAt dueAt items")
       .sort({ createdAt: -1 })
       .lean();
 
     const orderIds = orders.map(o => o._id);
     const assignments = await DeliveryAssignment.find({ orderId: { $in: orderIds } })
-      .populate("driverId")
+      .populate("driverId", "_id name")
       .lean();
 
     const assignmentMap = {};
@@ -182,14 +188,43 @@ exports.getDeliveryOrders = async (req, res) => {
  */
 exports.getDrivers = async (req, res) => {
   try {
-    const { restaurantId = "default" } = req.query;
+    const restaurantId = getRestaurantIdFromReq(req);
     const drivers = await Driver.find({ restaurantId })
       .select("_id driverId name phone status color activeOrderIds currentLocation assignedVehicleId")
-      .populate("assignedVehicleId")
+      .populate("assignedVehicleId", "_id number label isAssigned assignedDriverId")
       .lean();
+
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    // Get all driver-role employees for this branch
+    const employees = await Employee.find({
+      branchId: restaurantId,
+      role: "driver",
+      isActive: true,
+    }).select("_id employeeId driverRef").lean();
+
+    // Get today's checked-in attendance records for these employees
+    const empIds = employees.map((e) => e._id);
+    const attendances = await Attendance.find({
+      branchId: restaurantId,
+      employeeId: { $in: empIds },
+      date: todayStr,
+      status: { $in: ["checked-in", "on-break"] },
+    }).select("employeeId").lean();
+
+    const checkedInEmpIds = new Set(attendances.map((a) => a.employeeId.toString()));
+
+    const driverCheckedInMap = new Map();
+    employees.forEach((emp) => {
+      if (emp.driverRef) {
+        driverCheckedInMap.set(emp.driverRef.toString(), checkedInEmpIds.has(emp._id.toString()));
+      }
+    });
 
     const enriched = drivers.map((driver) => {
       const assignedVehicle = driver.assignedVehicleId;
+      const posCheckedIn = driverCheckedInMap.get(driver._id.toString()) || false;
 
       return {
         _id: driver._id,
@@ -199,7 +234,8 @@ exports.getDrivers = async (req, res) => {
         status: driver.status,
         color: driver.color,
         activeOrders: driver.activeOrderIds || [],
-        currentLocation: { lat: null, lng: null }, 
+        currentLocation: { lat: null, lng: null },
+        posCheckedIn,
         assignedVehicle: assignedVehicle
           ? {
               _id: assignedVehicle._id,
@@ -458,6 +494,33 @@ exports.assignVehicle = async (req, res) => {
     const driver = await Driver.findById(driverId);
     if (!driver) {
       return res.status(404).json({ success: false, message: "Driver not found." });
+    }
+
+    const employee = await Employee.findOne({
+      branchId: driver.restaurantId,
+      $or: [
+        ...(driver.driverRef ? [{ _id: driver.driverRef }] : []),
+        { employeeId: driver.driverId },
+      ],
+      isActive: true,
+    }).select("_id").lean();
+
+    if (employee) {
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const att = await Attendance.findOne({
+        branchId: driver.restaurantId,
+        employeeId: employee._id,
+        date: todayStr,
+        status: { $in: ["checked-in", "on-break"] },
+      }).select("status").lean();
+
+      if (!att) {
+        return res.status(400).json({
+          success: false,
+          message: "Driver must check-in at POS terminal before a vehicle can be assigned.",
+        });
+      }
     }
 
     // Unassign current vehicle if any
