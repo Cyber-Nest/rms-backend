@@ -14,10 +14,35 @@ const {
   triggerOrderUpdated,
 } = require("../../../config/pusher");
 
+const jwt = require("jsonwebtoken");
+const JWT_SECRET = process.env.JWT_SECRET || "rms_super_secret_jwt_key";
+
 // ─── Helper ───
 const handleError = (res, error, status = 400) => {
   logger.error(`Delivery Controller Error: ${error.message}`);
   return res.status(status).json({ success: false, message: error.message });
+};
+
+const getRestaurantIdFromReq = (req) => {
+  let branchId =
+    req.query.restaurantId ||
+    req.query.branchId ||
+    req.body.restaurantId ||
+    req.body.branchId ||
+    req.headers["x-branch-id"] ||
+    req.headers["branchid"] ||
+    req.headers["x-branchid"] ||
+    req.branch?.branchId ||
+    req.branch?._id;
+
+  if (!branchId && req.cookies?.rms_branch_token) {
+    try {
+      const decoded = jwt.verify(req.cookies.rms_branch_token, JWT_SECRET);
+      branchId = decoded?.branchId || decoded?._id;
+    } catch (e) {}
+  }
+
+  return branchId ? String(branchId) : "default";
 };
 
 
@@ -198,11 +223,21 @@ exports.getDrivers = async (req, res) => {
  */
 exports.getVehicles = async (req, res) => {
   try {
-    const { restaurantId = "default" } = req.query;
+    const restaurantId = getRestaurantIdFromReq(req);
+
+    // Auto-migrate legacy 'default' vehicles to the active restaurant branch if any
+    if (restaurantId !== "default") {
+      const branchCount = await Vehicle.countDocuments({ restaurantId });
+      if (branchCount === 0) {
+        await Vehicle.updateMany({ restaurantId: "default" }, { $set: { restaurantId } });
+      }
+    }
+
     const vehicles = await Vehicle.find({ restaurantId })
       .select("_id number label status isAssigned assignedDriverId")
-      .sort({ number: 1 })
+      .sort({ createdAt: 1 })
       .lean();
+
     res.status(200).json({ success: true, data: vehicles });
   } catch (error) {
     handleError(res, error, 500);
@@ -215,10 +250,14 @@ exports.getVehicles = async (req, res) => {
  */
 exports.createVehicle = async (req, res) => {
   try {
-    const { number, label, restaurantId = "default" } = req.body;
+    const restaurantId = getRestaurantIdFromReq(req);
+    let { number, label } = req.body;
     if (!number || !label) {
       return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
     }
+
+    number = String(number).trim().toUpperCase();
+    label = String(label).trim();
 
     // Alphanumeric validation
     const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
@@ -229,7 +268,7 @@ exports.createVehicle = async (req, res) => {
     // Check if number already exists for this restaurant
     const existing = await Vehicle.findOne({ number, restaurantId });
     if (existing) {
-      return res.status(400).json({ success: false, message: "Vehicle number already exists." });
+      return res.status(400).json({ success: false, message: "Vehicle number already exists for this restaurant." });
     }
 
     const vehicle = new Vehicle({ number, label, restaurantId });
@@ -249,11 +288,15 @@ exports.createVehicle = async (req, res) => {
 exports.updateVehicle = async (req, res) => {
   try {
     const { id } = req.params;
-    const { number, label } = req.body;
+    let { number, label } = req.body;
+    const restaurantId = getRestaurantIdFromReq(req);
 
     if (!number || !label) {
       return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
     }
+
+    number = String(number).trim().toUpperCase();
+    label = String(label).trim();
 
     // Alphanumeric validation
     const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
@@ -261,16 +304,16 @@ exports.updateVehicle = async (req, res) => {
       return res.status(400).json({ success: false, message: "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only)." });
     }
 
-    const vehicle = await Vehicle.findById(id);
+    const vehicle = await Vehicle.findOne({ _id: id, restaurantId });
     if (!vehicle) {
       return res.status(404).json({ success: false, message: "Vehicle not found." });
     }
 
     // Check for duplicate vehicle number if changed
     if (vehicle.number !== number) {
-      const existing = await Vehicle.findOne({ number, restaurantId: vehicle.restaurantId });
+      const existing = await Vehicle.findOne({ number, restaurantId });
       if (existing) {
-        return res.status(400).json({ success: false, message: "Vehicle number already exists." });
+        return res.status(400).json({ success: false, message: "Vehicle number already exists for this restaurant." });
       }
     }
 
@@ -291,7 +334,9 @@ exports.updateVehicle = async (req, res) => {
 exports.deleteVehicle = async (req, res) => {
   try {
     const { id } = req.params;
-    const vehicle = await Vehicle.findById(id);
+    const restaurantId = getRestaurantIdFromReq(req);
+
+    const vehicle = await Vehicle.findOne({ _id: id, restaurantId });
     if (!vehicle) {
       return res.status(404).json({ success: false, message: "Vehicle not found." });
     }
