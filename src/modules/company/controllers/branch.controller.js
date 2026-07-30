@@ -136,11 +136,26 @@ exports.loginBranch = async (req, res) => {
 };
 
 exports.logoutBranch = async (req, res) => {
-  res.clearCookie("rms_branch_token");
+  res.clearCookie("rms_branch_token", { httpOnly: true, sameSite: "lax" });
   res.status(200).json({
     success: true,
     message: "Branch logged out successfully",
   });
+};
+
+//if master terminal session cookie is valid — used by frontend login page
+exports.checkSession = async (req, res) => {
+  try {
+    res.status(200).json({
+      success: true,
+      data: {
+        branchId: req.branch?.branchId || req.branch?._id,
+        name: req.branch?.name,
+      },
+    });
+  } catch {
+    res.status(401).json({ success: false, message: "No active terminal session" });
+  }
 };
 
 exports.changePassword = async (req, res) => {

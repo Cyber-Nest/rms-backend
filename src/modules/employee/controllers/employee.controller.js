@@ -1,5 +1,20 @@
 const employeeService = require("../services/employee.service");
 const logger = require("../../../shared/utils/logger");
+const jwt = require("jsonwebtoken");
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Helper: validate that the terminal has an active master session
+const validateTerminalSession = (req) => {
+  const token = req.cookies?.rms_branch_token;
+  if (!token) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+};
+
 
 const getBranchIdFromReq = (req) => {
   return (
@@ -122,6 +137,15 @@ exports.updatePermissions = async (req, res) => {
 
 exports.verifyPin = async (req, res) => {
   try {
+    // ── Terminal session guard ──
+    const terminalSession = validateTerminalSession(req);
+    if (!terminalSession) {
+      return res.status(401).json({
+        success: false,
+        message: "No active terminal session. Ask manager to do Master Login first.",
+      });
+    }
+
     const branchId = getBranchIdFromReq(req);
     const { employeeId, pin } = req.body;
     const result = await employeeService.verifyEmployeePin(branchId, employeeId, pin);
@@ -141,6 +165,15 @@ exports.verifyPin = async (req, res) => {
 
 exports.loginAsCode = async (req, res) => {
   try {
+    // ── Terminal session guard ──
+    const terminalSession = validateTerminalSession(req);
+    if (!terminalSession) {
+      return res.status(401).json({
+        success: false,
+        message: "No active terminal session. Ask manager to do Master Login first.",
+      });
+    }
+
     const branchId = getBranchIdFromReq(req);
     const { employeeId, pin } = req.body;
     const result = await employeeService.loginAsCode(branchId, employeeId, pin);
