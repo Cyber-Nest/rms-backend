@@ -374,6 +374,10 @@ exports.loginAsCode = async (branchId, employeeId, pin) => {
     throw new Error("Employee not found or inactive");
   }
 
+  if (employee.role === "driver") {
+    throw new Error("Driver accounts cannot log in to POS terminal.");
+  }
+
   const isMatch = await employee.comparePin(cleanPin);
   if (!isMatch) {
     throw new Error("Invalid 4-digit PIN");
