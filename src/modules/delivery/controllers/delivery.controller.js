@@ -1,9 +1,11 @@
 const Driver = require("../models/Driver.model");
 const DeliveryAssignment = require("../models/DeliveryAssignment.model");
 const Vehicle = require("../models/Vehicle.model");
+const DriverDropSettlement = require("../models/DriverDropSettlement.model");
 const Order = require("../../order/models/order.model");
 const Attendance = require("../../employee/models/attendance.model");
 const Employee = require("../../employee/models/employee.model");
+const driverDropPdfService = require("../services/driverDropPdf.service");
 
 const logger = require("../../../shared/utils/logger");
 const {
@@ -45,23 +47,24 @@ const getRestaurantIdFromReq = (req) => {
   return branchId ? String(branchId) : "default";
 };
 
-
 // ─── PUSHER AUTH ───
 exports.pusherAuth = async (req, res) => {
   try {
     const { socket_id, channel_name } = req.body;
     if (!socket_id || !channel_name) {
-      return res.status(400).json({ success: false, message: "socket_id and channel_name are required." });
+      return res.status(400).json({
+        success: false,
+        message: "socket_id and channel_name are required.",
+      });
     }
 
     // Validate channel name pattern (only allow our delivery channels)
-    const validPatterns = [
-      /^private-restaurant-.+$/,
-      /^private-order-.+$/,
-    ];
+    const validPatterns = [/^private-restaurant-.+$/, /^private-order-.+$/];
     const isValid = validPatterns.some((p) => p.test(channel_name));
     if (!isValid) {
-      return res.status(403).json({ success: false, message: "Invalid channel name." });
+      return res
+        .status(403)
+        .json({ success: false, message: "Invalid channel name." });
     }
 
     const authResponse = authenticateChannel(socket_id, channel_name);
@@ -73,7 +76,6 @@ exports.pusherAuth = async (req, res) => {
 
 // ─── BRANCH DASHBOARD APIs ───
 
-
 exports.getDeliveryOrders = async (req, res) => {
   try {
     const { status } = req.query;
@@ -81,7 +83,11 @@ exports.getDeliveryOrders = async (req, res) => {
 
     // Get today's start and end
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
     const query = {
@@ -104,16 +110,20 @@ exports.getDeliveryOrders = async (req, res) => {
         {
           status: { $in: ["pending", "preparing", "ready"] },
         },
-      ]
+      ],
     };
 
     const orders = await Order.find(query)
-      .select("_id orderNumber customer status paymentStatus orderType total orderTiming scheduledAt createdAt dueAt items")
+      .select(
+        "_id orderNumber customer status paymentStatus orderType total orderTiming scheduledAt createdAt dueAt items",
+      )
       .sort({ createdAt: -1 })
       .lean();
 
-    const orderIds = orders.map(o => o._id);
-    const assignments = await DeliveryAssignment.find({ orderId: { $in: orderIds } })
+    const orderIds = orders.map((o) => o._id);
+    const assignments = await DeliveryAssignment.find({
+      orderId: { $in: orderIds },
+    })
       .populate("driverId", "_id name")
       .lean();
 
@@ -133,9 +143,15 @@ exports.getDeliveryOrders = async (req, res) => {
 
       if (assignment) {
         assignedDriverId = assignment.driverId?._id || null;
-        if (assignment.status === "completed" || assignment.status === "delivered") {
+        if (
+          assignment.status === "completed" ||
+          assignment.status === "delivered"
+        ) {
           deliveryStatus = "delivered";
-        } else if (assignment.status === "en-route" || assignment.status === "assigned") {
+        } else if (
+          assignment.status === "en-route" ||
+          assignment.status === "assigned"
+        ) {
           deliveryStatus = "en-route";
         }
       }
@@ -190,8 +206,13 @@ exports.getDrivers = async (req, res) => {
   try {
     const restaurantId = getRestaurantIdFromReq(req);
     const drivers = await Driver.find({ restaurantId })
-      .select("_id driverId name phone status color activeOrderIds currentLocation assignedVehicleId")
-      .populate("assignedVehicleId", "_id number label isAssigned assignedDriverId")
+      .select(
+        "_id driverId name phone status color activeOrderIds currentLocation assignedVehicleId",
+      )
+      .populate(
+        "assignedVehicleId",
+        "_id number label isAssigned assignedDriverId",
+      )
       .lean();
 
     const now = new Date();
@@ -202,7 +223,9 @@ exports.getDrivers = async (req, res) => {
       branchId: restaurantId,
       role: "driver",
       isActive: true,
-    }).select("_id employeeId driverRef").lean();
+    })
+      .select("_id employeeId driverRef")
+      .lean();
 
     // Get today's checked-in attendance records for these employees
     const empIds = employees.map((e) => e._id);
@@ -211,20 +234,28 @@ exports.getDrivers = async (req, res) => {
       employeeId: { $in: empIds },
       date: todayStr,
       status: { $in: ["checked-in", "on-break"] },
-    }).select("employeeId").lean();
+    })
+      .select("employeeId")
+      .lean();
 
-    const checkedInEmpIds = new Set(attendances.map((a) => a.employeeId.toString()));
+    const checkedInEmpIds = new Set(
+      attendances.map((a) => a.employeeId.toString()),
+    );
 
     const driverCheckedInMap = new Map();
     employees.forEach((emp) => {
       if (emp.driverRef) {
-        driverCheckedInMap.set(emp.driverRef.toString(), checkedInEmpIds.has(emp._id.toString()));
+        driverCheckedInMap.set(
+          emp.driverRef.toString(),
+          checkedInEmpIds.has(emp._id.toString()),
+        );
       }
     });
 
     const enriched = drivers.map((driver) => {
       const assignedVehicle = driver.assignedVehicleId;
-      const posCheckedIn = driverCheckedInMap.get(driver._id.toString()) || false;
+      const posCheckedIn =
+        driverCheckedInMap.get(driver._id.toString()) || false;
 
       return {
         _id: driver._id,
@@ -265,7 +296,10 @@ exports.getVehicles = async (req, res) => {
     if (restaurantId !== "default") {
       const branchCount = await Vehicle.countDocuments({ restaurantId });
       if (branchCount === 0) {
-        await Vehicle.updateMany({ restaurantId: "default" }, { $set: { restaurantId } });
+        await Vehicle.updateMany(
+          { restaurantId: "default" },
+          { $set: { restaurantId } },
+        );
       }
     }
 
@@ -289,7 +323,10 @@ exports.createVehicle = async (req, res) => {
     const restaurantId = getRestaurantIdFromReq(req);
     let { number, label } = req.body;
     if (!number || !label) {
-      return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
+      return res.status(400).json({
+        success: false,
+        message: "Vehicle number and label are required.",
+      });
     }
 
     number = String(number).trim().toUpperCase();
@@ -298,13 +335,20 @@ exports.createVehicle = async (req, res) => {
     // Alphanumeric validation
     const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
     if (!alphanumericRegex.test(number)) {
-      return res.status(400).json({ success: false, message: "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only)." });
+      return res.status(400).json({
+        success: false,
+        message:
+          "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only).",
+      });
     }
 
     // Check if number already exists for this restaurant
     const existing = await Vehicle.findOne({ number, restaurantId });
     if (existing) {
-      return res.status(400).json({ success: false, message: "Vehicle number already exists for this restaurant." });
+      return res.status(400).json({
+        success: false,
+        message: "Vehicle number already exists for this restaurant.",
+      });
     }
 
     const vehicle = new Vehicle({ number, label, restaurantId });
@@ -328,7 +372,10 @@ exports.updateVehicle = async (req, res) => {
     const restaurantId = getRestaurantIdFromReq(req);
 
     if (!number || !label) {
-      return res.status(400).json({ success: false, message: "Vehicle number and label are required." });
+      return res.status(400).json({
+        success: false,
+        message: "Vehicle number and label are required.",
+      });
     }
 
     number = String(number).trim().toUpperCase();
@@ -337,19 +384,28 @@ exports.updateVehicle = async (req, res) => {
     // Alphanumeric validation
     const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
     if (!alphanumericRegex.test(number)) {
-      return res.status(400).json({ success: false, message: "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only)." });
+      return res.status(400).json({
+        success: false,
+        message:
+          "Vehicle number must be alphanumeric (letters, numbers, space or hyphen only).",
+      });
     }
 
     const vehicle = await Vehicle.findOne({ _id: id, restaurantId });
     if (!vehicle) {
-      return res.status(404).json({ success: false, message: "Vehicle not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Vehicle not found." });
     }
 
     // Check for duplicate vehicle number if changed
     if (vehicle.number !== number) {
       const existing = await Vehicle.findOne({ number, restaurantId });
       if (existing) {
-        return res.status(400).json({ success: false, message: "Vehicle number already exists for this restaurant." });
+        return res.status(400).json({
+          success: false,
+          message: "Vehicle number already exists for this restaurant.",
+        });
       }
     }
 
@@ -374,19 +430,23 @@ exports.deleteVehicle = async (req, res) => {
 
     const vehicle = await Vehicle.findOne({ _id: id, restaurantId });
     if (!vehicle) {
-      return res.status(404).json({ success: false, message: "Vehicle not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Vehicle not found." });
     }
 
     // If vehicle is assigned to a driver, unassign it first
     if (vehicle.isAssigned && vehicle.assignedDriverId) {
       await Driver.findByIdAndUpdate(vehicle.assignedDriverId, {
-        assignedVehicleId: null
+        assignedVehicleId: null,
       });
     }
 
     await Vehicle.findByIdAndDelete(id);
 
-    res.status(200).json({ success: true, message: "Vehicle deleted successfully." });
+    res
+      .status(200)
+      .json({ success: true, message: "Vehicle deleted successfully." });
   } catch (error) {
     handleError(res, error, 500);
   }
@@ -400,20 +460,29 @@ exports.assignDriver = async (req, res) => {
   try {
     const { orderId, driverId } = req.body;
     if (!orderId || !driverId) {
-      return res.status(400).json({ success: false, message: "orderId and driverId are required." });
+      return res.status(400).json({
+        success: false,
+        message: "orderId and driverId are required.",
+      });
     }
 
     const driver = await Driver.findById(driverId);
     if (!driver) {
-      return res.status(404).json({ success: false, message: "Driver not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found." });
     }
     if (!driver.assignedVehicleId) {
-      return res.status(400).json({ success: false, message: "Driver has no vehicle assigned." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Driver has no vehicle assigned." });
     }
 
     const order = await Order.findById(orderId);
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found." });
     }
 
     // Check if already assigned
@@ -422,7 +491,10 @@ exports.assignDriver = async (req, res) => {
       status: { $in: ["assigned", "en-route"] },
     });
     if (existingAssignment) {
-      return res.status(400).json({ success: false, message: "Order is already assigned to a driver." });
+      return res.status(400).json({
+        success: false,
+        message: "Order is already assigned to a driver.",
+      });
     }
 
     // Create delivery assignment
@@ -480,20 +552,29 @@ exports.assignVehicle = async (req, res) => {
   try {
     const { driverId, vehicleId } = req.body;
     if (!driverId || !vehicleId) {
-      return res.status(400).json({ success: false, message: "driverId and vehicleId are required." });
+      return res.status(400).json({
+        success: false,
+        message: "driverId and vehicleId are required.",
+      });
     }
 
     const vehicle = await Vehicle.findById(vehicleId);
     if (!vehicle) {
-      return res.status(404).json({ success: false, message: "Vehicle not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Vehicle not found." });
     }
     if (vehicle.isAssigned) {
-      return res.status(400).json({ success: false, message: "Vehicle is already assigned." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Vehicle is already assigned." });
     }
 
     const driver = await Driver.findById(driverId);
     if (!driver) {
-      return res.status(404).json({ success: false, message: "Driver not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found." });
     }
 
     const employee = await Employee.findOne({
@@ -503,7 +584,9 @@ exports.assignVehicle = async (req, res) => {
         { employeeId: driver.driverId },
       ],
       isActive: true,
-    }).select("_id").lean();
+    })
+      .select("_id")
+      .lean();
 
     if (employee) {
       const now = new Date();
@@ -513,12 +596,15 @@ exports.assignVehicle = async (req, res) => {
         employeeId: employee._id,
         date: todayStr,
         status: { $in: ["checked-in", "on-break"] },
-      }).select("status").lean();
+      })
+        .select("status")
+        .lean();
 
       if (!att) {
         return res.status(400).json({
           success: false,
-          message: "Driver must check-in at POS terminal before a vehicle can be assigned.",
+          message:
+            "Driver must check-in at POS terminal before a vehicle can be assigned.",
         });
       }
     }
@@ -554,7 +640,9 @@ exports.unassignVehicle = async (req, res) => {
     const { driverId } = req.params;
     const driver = await Driver.findById(driverId);
     if (!driver) {
-      return res.status(404).json({ success: false, message: "Driver not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found." });
     }
 
     if (driver.assignedVehicleId) {
@@ -579,7 +667,10 @@ exports.driverLogin = async (req, res) => {
   try {
     const { driverId, password, branchId } = req.body;
     if (!driverId || !password) {
-      return res.status(400).json({ success: false, message: "driverId and password are required." });
+      return res.status(400).json({
+        success: false,
+        message: "driverId and password are required.",
+      });
     }
 
     const cleanDriverId = driverId.trim().toUpperCase();
@@ -590,10 +681,7 @@ exports.driverLogin = async (req, res) => {
     if (branchId) {
       employee = await Employee.findOne({
         branchId,
-        $or: [
-          { employeeId: cleanDriverId },
-          { phone: cleanDriverId },
-        ],
+        $or: [{ employeeId: cleanDriverId }, { phone: cleanDriverId }],
         isActive: true,
       });
     }
@@ -620,7 +708,10 @@ exports.driverLogin = async (req, res) => {
     }
 
     if (!driver && !employee) {
-      return res.status(401).json({ success: false, message: "Driver ID is not registered for this restaurant branch." });
+      return res.status(401).json({
+        success: false,
+        message: "Driver ID is not registered for this restaurant branch.",
+      });
     }
 
     // Verify password / PIN
@@ -632,11 +723,14 @@ exports.driverLogin = async (req, res) => {
     }
 
     if (!isPasswordValid) {
-      return res.status(401).json({ success: false, message: "Invalid 4-digit PIN / password." });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid 4-digit PIN / password." });
     }
 
     // Ensure driver record exists
-    const targetBranchId = branchId || driver?.restaurantId || employee?.branchId;
+    const targetBranchId =
+      branchId || driver?.restaurantId || employee?.branchId;
     if (!driver && employee) {
       // Create Driver model linked to employee if missing
       driver = new Driver({
@@ -665,11 +759,16 @@ exports.driverLogin = async (req, res) => {
         .select("status")
         .lean();
 
-      if (!todayAttendance || (todayAttendance.status !== "checked-in" && todayAttendance.status !== "on-break")) {
+      if (
+        !todayAttendance ||
+        (todayAttendance.status !== "checked-in" &&
+          todayAttendance.status !== "on-break")
+      ) {
         return res.status(403).json({
           success: false,
           code: "CHECK_IN_REQUIRED",
-          message: "Please check-in first at the POS system before accessing Driver Web.",
+          message:
+            "Please check-in first at the POS system before accessing Driver Web.",
         });
       }
     }
@@ -685,7 +784,9 @@ exports.driverLogin = async (req, res) => {
 
     if (activeAssignments.length > 0) {
       activeOrderIds = activeAssignments.map((a) => a.orderId);
-      const hasDelivered = activeAssignments.some((a) => a.status === "delivered");
+      const hasDelivered = activeAssignments.some(
+        (a) => a.status === "delivered",
+      );
       recoveredStatus = hasDelivered ? "returning" : "on-delivery";
     }
 
@@ -774,7 +875,9 @@ exports.markDelivered = async (req, res) => {
 
     const assignment = await DeliveryAssignment.findById(assignmentId);
     if (!assignment) {
-      return res.status(404).json({ success: false, message: "Assignment not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Assignment not found." });
     }
 
     assignment.status = "delivered";
@@ -805,14 +908,18 @@ exports.markDelivered = async (req, res) => {
           },
         },
       },
-      { new: true }
+      { new: true },
     );
 
     // Trigger Pusher events
-    await triggerDeliveryStatusUpdate(assignment.restaurantId, assignment.orderId.toString(), {
-      status: "delivered",
-      driverId: assignment.driverId.toString(),
-    });
+    await triggerDeliveryStatusUpdate(
+      assignment.restaurantId,
+      assignment.orderId.toString(),
+      {
+        status: "delivered",
+        driverId: assignment.driverId.toString(),
+      },
+    );
 
     if (order) {
       await triggerOrderUpdated(order);
@@ -841,7 +948,9 @@ exports.markCompleted = async (req, res) => {
 
     const assignment = await DeliveryAssignment.findById(assignmentId);
     if (!assignment) {
-      return res.status(404).json({ success: false, message: "Assignment not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Assignment not found." });
     }
 
     assignment.status = "completed";
@@ -889,7 +998,10 @@ exports.updateDriverStatus = async (req, res) => {
     const { status } = req.body;
 
     if (!["available", "offline"].includes(status)) {
-      return res.status(400).json({ success: false, message: "Status must be 'available' or 'offline'." });
+      return res.status(400).json({
+        success: false,
+        message: "Status must be 'available' or 'offline'.",
+      });
     }
 
     const driver = await Driver.findByIdAndUpdate(
@@ -899,7 +1011,9 @@ exports.updateDriverStatus = async (req, res) => {
     ).lean();
 
     if (!driver) {
-      return res.status(404).json({ success: false, message: "Driver not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found." });
     }
 
     await triggerDriverStatusChange(driver.restaurantId, {
@@ -919,9 +1033,13 @@ exports.updateDriverStatus = async (req, res) => {
 exports.getDriverById = async (req, res) => {
   try {
     const { id } = req.params;
-    const driver = await Driver.findById(id).populate("assignedVehicleId").lean();
+    const driver = await Driver.findById(id)
+      .populate("assignedVehicleId")
+      .lean();
     if (!driver) {
-      return res.status(404).json({ success: false, message: "Driver not found." });
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found." });
     }
 
     // Check today's POS attendance status
@@ -959,7 +1077,7 @@ exports.getDriverById = async (req, res) => {
     if (driver.assignedVehicleId) {
       assignedVehicle = driver.assignedVehicleId;
     }
-    
+
     res.status(200).json({
       success: true,
       data: {
@@ -1050,7 +1168,9 @@ exports.unassignDriver = async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) {
-      return res.status(400).json({ success: false, message: "orderId is required." });
+      return res
+        .status(400)
+        .json({ success: false, message: "orderId is required." });
     }
 
     const assignment = await DeliveryAssignment.findOne({
@@ -1059,7 +1179,10 @@ exports.unassignDriver = async (req, res) => {
     });
 
     if (!assignment) {
-      return res.status(404).json({ success: false, message: "No active assignment found for this order." });
+      return res.status(404).json({
+        success: false,
+        message: "No active assignment found for this order.",
+      });
     }
 
     const driverId = assignment.driverId;
@@ -1072,7 +1195,7 @@ exports.unassignDriver = async (req, res) => {
     const driver = await Driver.findById(driverId);
     if (driver) {
       driver.activeOrderIds = driver.activeOrderIds.filter(
-        (oid) => oid.toString() !== orderId.toString()
+        (oid) => oid.toString() !== orderId.toString(),
       );
       if (driver.activeOrderIds.length === 0) {
         driver.status = "available";
@@ -1090,17 +1213,27 @@ exports.unassignDriver = async (req, res) => {
     const pusher = require("../../../config/pusher");
     if (pusher.pusherInstance) {
       // 1. Tell order tracking map driver is unassigned
-      pusher.pusherInstance.trigger(`private-order-${orderId}`, "delivery-unassigned", {
-        orderId,
-      });
+      pusher.pusherInstance.trigger(
+        `private-order-${orderId}`,
+        "delivery-unassigned",
+        {
+          orderId,
+        },
+      );
       // 2. Tell branch dashboard to re-fetch/update
-      pusher.pusherInstance.trigger(`private-restaurant-${restaurantId}`, "delivery-assigned", {
-        unassigned: true,
-        orderId,
-      });
+      pusher.pusherInstance.trigger(
+        `private-restaurant-${restaurantId}`,
+        "delivery-assigned",
+        {
+          unassigned: true,
+          orderId,
+        },
+      );
     }
 
-    res.status(200).json({ success: true, message: "Driver unassigned successfully." });
+    res
+      .status(200)
+      .json({ success: true, message: "Driver unassigned successfully." });
   } catch (error) {
     handleError(res, error, 500);
   }
@@ -1117,7 +1250,7 @@ exports.completeActiveAssignment = async (req, res) => {
     // Find all delivered (returning) assignments for this driver
     await DeliveryAssignment.updateMany(
       { driverId, status: "delivered" },
-      { $set: { status: "completed", completedAt: new Date() } }
+      { $set: { status: "completed", completedAt: new Date() } },
     );
 
     const driver = await Driver.findById(driverId);
@@ -1133,7 +1266,518 @@ exports.completeActiveAssignment = async (req, res) => {
       });
     }
 
-    res.status(200).json({ success: true, message: "Driver is now available." });
+    res
+      .status(200)
+      .json({ success: true, message: "Driver is now available." });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * GET: Fetch drivers for Driver Drop Dashboard for a given date
+ * Query params: date (YYYY-MM-DD), branchId / restaurantId
+ */
+exports.getDriverDropDrivers = async (req, res) => {
+  try {
+    const restaurantId = getRestaurantIdFromReq(req);
+    const dateStr = req.query.date || new Date().toISOString().split("T")[0];
+
+    // Find all driver employees for this branch
+    const employees = await Employee.find({
+      branchId: restaurantId,
+      $or: [{ role: "driver" }, { driverRef: { $exists: true, $ne: null } }],
+    })
+      .select("_id driverRef employeeId name")
+      .lean();
+
+    const employeeIds = employees.map((e) => e._id);
+
+    // Find attendance records for selected date
+    const attendances = await Attendance.find({
+      branchId: restaurantId,
+      employeeId: { $in: employeeIds },
+      date: dateStr,
+    })
+      .select("employeeId status")
+      .lean();
+
+    const checkedInEmpIds = new Set(
+      attendances.map((a) => a.employeeId.toString()),
+    );
+
+    // Find existing settlements for this date
+    const settlements = await DriverDropSettlement.find({
+      branchId: restaurantId,
+      date: dateStr,
+    })
+      .select("driverId status totalSales netCashPayoutToDriver")
+      .lean();
+
+    const settlementMap = new Map();
+    settlements.forEach((s) => {
+      if (s.driverId) {
+        settlementMap.set(s.driverId.toString(), s);
+      }
+    });
+
+    const validDriverIds = new Set();
+    employees.forEach((emp) => {
+      if (checkedInEmpIds.has(emp._id.toString()) && emp.driverRef) {
+        validDriverIds.add(emp.driverRef.toString());
+      }
+    });
+    settlements.forEach((s) => {
+      if (s.driverId) {
+        validDriverIds.add(s.driverId.toString());
+      }
+    });
+
+    let drivers = [];
+    if (validDriverIds.size > 0) {
+      drivers = await Driver.find({
+        restaurantId,
+        _id: { $in: Array.from(validDriverIds) },
+      })
+        .select("_id driverId name phone status color assignedVehicleId")
+        .populate("assignedVehicleId", "number label")
+        .lean();
+    } else {
+      const empCodes = employees
+        .filter((e) => checkedInEmpIds.has(e._id.toString()))
+        .map((e) => e.employeeId);
+      if (empCodes.length > 0) {
+        drivers = await Driver.find({
+          restaurantId,
+          driverId: { $in: empCodes },
+        })
+          .select("_id driverId name phone status color assignedVehicleId")
+          .populate("assignedVehicleId", "number label")
+          .lean();
+      }
+    }
+
+    const result = drivers.map((d) => {
+      const settlement = settlementMap.get(d._id.toString());
+      let vehicleStr = "No Vehicle";
+      if (d.assignedVehicleId) {
+        const v = d.assignedVehicleId;
+        const label = v.label || "";
+        if (label.toLowerCase().includes("vehicle")) {
+          vehicleStr = label;
+        } else if (label && v.number) {
+          vehicleStr = `Vehicle #${v.number} - ${label}`;
+        } else if (v.number) {
+          vehicleStr = `Vehicle #${v.number}`;
+        }
+      }
+
+      return {
+        id: d._id.toString(),
+        driverId: d.driverId || d._id.toString().slice(-4),
+        name: d.name,
+        phone: d.phone || "",
+        vehicle: vehicleStr,
+        status: settlement
+          ? "Completed Shift"
+          : d.status === "offline"
+            ? "Available"
+            : d.status,
+        isSettled: Boolean(settlement),
+        settlementSummary: settlement || null,
+      };
+    });
+
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * GET: Fetch live delivered orders breakdown & totals for a specific driver and date
+ * Query params: driverId, date, branchId / restaurantId
+ */
+exports.getDriverDropSummary = async (req, res) => {
+  try {
+    const restaurantId = getRestaurantIdFromReq(req);
+    const { driverId, date } = req.query;
+    if (!driverId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "driverId is required" });
+    }
+
+    const targetDate = date || new Date().toISOString().split("T")[0];
+    const startOfDay = new Date(`${targetDate}T00:00:00.000Z`);
+    const endOfDay = new Date(`${targetDate}T23:59:59.999Z`);
+
+    // Check if already settled
+    const existingSettlement = await DriverDropSettlement.findOne({
+      branchId: restaurantId,
+      driverId,
+      date: targetDate,
+    }).lean();
+
+    if (existingSettlement) {
+      const orders = (existingSettlement.orders || []).map((o) => ({
+        ...o,
+        ticketName: o.ticketName || `${o.orderNumber || ""} ${o.customerName || "Customer"}`.trim(),
+      }));
+      return res.status(200).json({
+        success: true,
+        data: {
+          isSettled: true,
+          settlement: existingSettlement,
+          orders,
+        },
+      });
+    }
+
+    // Find all delivery assignments for this driver on the date
+    const assignments = await DeliveryAssignment.find({
+      driverId,
+      createdAt: { $gte: startOfDay, $lte: endOfDay },
+    })
+      .populate("orderId")
+      .lean();
+
+    // Map orders
+    const orders = assignments
+      .filter((a) => a.orderId)
+      .map((a) => {
+        const order = a.orderId;
+
+        // Payment Detail code: PP (Prepaid online), TM (Terminal card), CS (Cash)
+        let pd = "PP";
+        if (
+          order.orderSource === "online" ||
+          order.paymentTiming === "pay-now" ||
+          order.paymentMethod === "stripe"
+        ) {
+          pd = "PP";
+        } else if (
+          order.payments &&
+          order.payments.some(
+            (p) =>
+              p.method === "card" ||
+              p.method === "debit" ||
+              p.method === "credit",
+          )
+        ) {
+          pd = "TM";
+        } else if (
+          order.payments &&
+          order.payments.some((p) => p.method === "cash")
+        ) {
+          pd = "CS";
+        } else if (order.paymentMethod === "card") {
+          pd = "TM";
+        } else if (order.paymentMethod === "cash") {
+          pd = "CS";
+        }
+
+        const prepaidTip = pd === "PP" ? order.tip || 0 : 0;
+        const terminalTip = pd === "TM" ? order.tip || 0 : 0;
+        const cashGiven = pd === "CS" ? order.total || 0 : 0;
+
+        return {
+          id: order._id.toString(),
+          ticketName: `${order.orderNumber} ${order.customer?.name || "Customer"}`,
+          customerName: order.customer?.name || "Customer",
+          phone: order.customer?.phone || "",
+          address: order.customer?.address || "",
+          time: new Date(order.createdAt).toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          }),
+          total: order.total || 0,
+          dc: 6.0,
+          pd,
+          prepaidTip,
+          terminalTip,
+          cashGiven,
+        };
+      });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        isSettled: false,
+        settlement: null,
+        orders,
+      },
+    });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * POST: Submit Driver Drop Settlement
+ * Body: { branchId, driverId, date, terminalSales, terminalTips, cashSales, additionalCommission, additionalReason, settledBy }
+ */
+exports.settleDriverDrop = async (req, res) => {
+  try {
+    const restaurantId = getRestaurantIdFromReq(req);
+    const {
+      driverId,
+      date,
+      terminalSales = 0,
+      terminalTips = 0,
+      cashSales = 0,
+      additionalCommission = 0,
+      additionalReason = "",
+      settledBy = "Manager",
+    } = req.body;
+
+    if (!driverId || !date) {
+      return res
+        .status(400)
+        .json({ success: false, message: "driverId and date are required." });
+    }
+
+    const driver = await Driver.findById(driverId);
+    if (!driver) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found." });
+    }
+
+    const startOfDay = new Date(`${date}T00:00:00.000Z`);
+    const endOfDay = new Date(`${date}T23:59:59.999Z`);
+
+    const assignments = await DeliveryAssignment.find({
+      driverId,
+      createdAt: { $gte: startOfDay, $lte: endOfDay },
+    })
+      .populate("orderId")
+      .lean();
+
+    const orders = assignments
+      .filter((a) => a.orderId)
+      .map((a) => {
+        const order = a.orderId;
+        let pd = "PP";
+        if (
+          order.orderSource === "online" ||
+          order.paymentTiming === "pay-now" ||
+          order.paymentMethod === "stripe"
+        ) {
+          pd = "PP";
+        } else if (
+          order.payments &&
+          order.payments.some(
+            (p) =>
+              p.method === "card" ||
+              p.method === "debit" ||
+              p.method === "credit",
+          )
+        ) {
+          pd = "TM";
+        } else if (
+          order.payments &&
+          order.payments.some((p) => p.method === "cash")
+        ) {
+          pd = "CS";
+        } else if (order.paymentMethod === "card") {
+          pd = "TM";
+        } else if (order.paymentMethod === "cash") {
+          pd = "CS";
+        }
+
+        return {
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          ticketName: `${order.orderNumber || ""} ${order.customer?.name || "Customer"}`.trim(),
+          customerName: order.customer?.name || "Customer",
+          phone: order.customer?.phone || "",
+          address: order.customer?.address || "",
+          time: new Date(order.createdAt).toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          }),
+          total: order.total || 0,
+          dc: 6.0,
+          pd,
+          prepaidTip: pd === "PP" ? order.tip || 0 : 0,
+          terminalTip: pd === "TM" ? order.tip || 0 : 0,
+          cashGiven: pd === "CS" ? order.total || 0 : 0,
+        };
+      });
+
+    const totalOrders = orders.length;
+    const totalSales = orders.reduce((sum, o) => sum + o.total, 0);
+    const prepaidOrders = orders.filter((o) => o.pd === "PP");
+    const prepaidSales = prepaidOrders.reduce((sum, o) => sum + o.total, 0);
+    const prepaidTips = orders.reduce((sum, o) => sum + o.prepaidTip, 0);
+    const totalNewSales = Math.max(0, totalSales - prepaidSales - prepaidTips);
+
+    const enteredTerminalSales = parseFloat(terminalSales) || 0;
+    const enteredTerminalTips = parseFloat(terminalTips) || 0;
+    const enteredCashSales = parseFloat(cashSales) || 0;
+
+    const saleDue =
+      Math.round(
+        (totalNewSales -
+          enteredTerminalSales -
+          enteredTerminalTips -
+          enteredCashSales) *
+          100,
+      ) / 100;
+
+    if (saleDue > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot submit settlement while Sale Due is $${saleDue.toFixed(2)}. Reconciliation must be $0.00 or less.`,
+      });
+    }
+
+    const driverBaseCommission = totalOrders * 6.0;
+    const extraComm = parseFloat(additionalCommission) || 0;
+    const driverTotalCommission = driverBaseCommission + extraComm;
+    const totalTipsEarned = prepaidTips + enteredTerminalTips;
+    const totalDriverEarning = driverTotalCommission + totalTipsEarned;
+    const netCashPayoutToDriver = totalDriverEarning;
+
+    const settlementPayload = {
+      branchId: restaurantId,
+      driverId: driver._id,
+      driverCode: driver.driverId || "",
+      driverName: driver.name,
+      date,
+      orders,
+      totalOrders,
+      totalSales,
+      prepaidSales,
+      prepaidTips,
+      totalNewSales,
+      terminalSales: enteredTerminalSales,
+      terminalTips: enteredTerminalTips,
+      cashSales: enteredCashSales,
+      saleDue,
+      driverBaseCommission,
+      additionalCommission: extraComm,
+      additionalReason,
+      driverTotalCommission,
+      totalTipsEarned,
+      totalDriverEarning,
+      netCashPayoutToDriver,
+      status: "settled",
+      settledBy,
+      settledAt: new Date(),
+    };
+
+    const settlement = await DriverDropSettlement.findOneAndUpdate(
+      { branchId: restaurantId, date, driverId: driver._id },
+      { $set: settlementPayload },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+
+    res.status(200).json({ success: true, data: settlement });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * GET: Download Driver Drop PDF Receipt (sales report, commission slip, or both)
+ * Query params: driverId, date, type (sales | commission | both)
+ */
+exports.downloadDriverDropPdf = async (req, res) => {
+  try {
+    const restaurantId = getRestaurantIdFromReq(req);
+    const { driverId, date, type = "both" } = req.query;
+
+    if (!driverId || !date) {
+      return res
+        .status(400)
+        .json({ success: false, message: "driverId and date are required." });
+    }
+
+    const driver = await Driver.findById(driverId);
+    if (!driver) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Driver not found." });
+    }
+
+    const settlement = await DriverDropSettlement.findOne({
+      branchId: restaurantId,
+      driverId,
+      date,
+    }).lean();
+
+    const startOfDay = new Date(`${date}T00:00:00.000Z`);
+    const endOfDay = new Date(`${date}T23:59:59.999Z`);
+
+    let orders = [];
+    if (settlement && settlement.orders && settlement.orders.length > 0) {
+      orders = settlement.orders;
+    } else {
+      const assignments = await DeliveryAssignment.find({
+        driverId,
+        createdAt: { $gte: startOfDay, $lte: endOfDay },
+      })
+        .populate("orderId")
+        .lean();
+
+      orders = assignments
+        .filter((a) => a.orderId)
+        .map((a) => {
+          const order = a.orderId;
+          let pd = "PP";
+          if (
+            order.orderSource === "online" ||
+            order.paymentTiming === "pay-now" ||
+            order.paymentMethod === "stripe"
+          ) {
+            pd = "PP";
+          } else if (
+            order.payments &&
+            order.payments.some(
+              (p) =>
+                p.method === "card" ||
+                p.method === "debit" ||
+                p.method === "credit"
+            )
+          ) {
+            pd = "TM";
+          } else if (
+            order.payments &&
+            order.payments.some((p) => p.method === "cash")
+          ) {
+            pd = "CS";
+          } else if (order.paymentMethod === "card") {
+            pd = "TM";
+          } else if (order.paymentMethod === "cash") {
+            pd = "CS";
+          }
+          return {
+            orderNumber: order.orderNumber,
+            ticketName: `${order.orderNumber || ""} ${order.customer?.name || "Customer"}`.trim(),
+            customerName: order.customer?.name || "Customer",
+            total: order.total || 0,
+            dc: 6.0,
+            pd,
+            prepaidTip: pd === "PP" ? order.tip || 0 : 0,
+            terminalTip: pd === "TM" ? order.tip || 0 : 0,
+          };
+        });
+    }
+
+    const driverCode = driver.driverId || driver._id.toString().slice(-4);
+    const filename = `Driver_Receipt_${type}_${driverCode}_${date}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    await driverDropPdfService.generateDriverDropPdf(
+      { driver, date, type, settlement, orders, branchId: restaurantId },
+      res
+    );
   } catch (error) {
     handleError(res, error, 500);
   }

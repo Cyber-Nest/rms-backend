@@ -4,6 +4,7 @@ const Product = require("../../menu/models/product.model");
 const Category = require("../../menu/models/category.model");
 const Expense = require("../../expense/models/expense.model");
 const Deposit = require("../models/deposit.model");
+const DriverDropSettlement = require("../../delivery/models/DriverDropSettlement.model");
 const logger = require("../../../shared/utils/logger");
 const { getLocalDateStr, getLocalStartOfDay, getLocalEndOfDay, getLocalHour, getLocalDayName } = require("../../../shared/utils/timezone");
 const stripe = process.env.STRIPE_SECRET_KEY
@@ -608,12 +609,14 @@ exports.getSalesSummary = async (filters = {}) => {
     }
 
     // ── Parallel fetch: orders + deposit + expenses + product lookups ──
-    const expQuery = { ...( filters.branchId ? { branchId: filters.branchId } : {}) };
+    const expQuery = { ...(filters.branchId ? { branchId: filters.branchId } : {}) };
     if (start && end) {
       expQuery.expenseDate = { $gte: start, $lte: end };
     }
 
-    const [orders, deposit, expensesList, { categoryMap: productCategoryMap }] = await Promise.all([
+    const dropQuery = { ...(filters.branchId ? { branchId: filters.branchId } : {}), date: targetDateStr };
+
+    const [orders, deposit, expensesList, { categoryMap: productCategoryMap }, driverSettlements] = await Promise.all([
       Order.find(query)
         .select("status tip total subtotal tax discount orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod")
         .lean(),
@@ -623,6 +626,7 @@ exports.getSalesSummary = async (filters = {}) => {
         .lean()
         .catch(() => []),
       getProductLookups(),
+      DriverDropSettlement.find(dropQuery).lean().catch(() => []),
     ]);
 
 
@@ -754,10 +758,12 @@ exports.getSalesSummary = async (filters = {}) => {
       }
     }
 
+    let totalDriverCashPayout = 0;
+    (driverSettlements || []).forEach((ds) => {
+      totalDriverCashPayout += ds.netCashPayoutToDriver || 0;
+    });
 
-
-    
-    const adjustedExpectedCash = Math.max(0, cashTotal - totalCashExpense);
+    const adjustedExpectedCash = Math.max(0, cashTotal - totalCashExpense - totalDriverCashPayout);
     const adjustedPosTotal = Math.max(0, posTotal - totalCashExpense);
 
     let shortageOverageCash = 0;
@@ -841,7 +847,19 @@ exports.getSalesSummary = async (filters = {}) => {
         accountPay: round2(shortageOverageAccountPay),
       },
       moneyToBeCollected: { cash: round2(adjustedExpectedCash), card: round2(cardTotal), accountPay: round2(accountPayTotal) },
-      driverReport: [],
+      driverReport: (driverSettlements || []).map((ds) => ({
+        driverName: ds.driverName,
+        deliveryCount: ds.totalOrders,
+        prepaidSales: round2(ds.prepaidSales),
+        cashSales: round2(ds.cashSales),
+        cardSales: round2(ds.terminalSales),
+        prepaidTip: round2(ds.prepaidTips),
+        terminalTip: round2(ds.terminalTips),
+        totalTip: round2(ds.totalTipsEarned),
+        totalSales: round2(ds.totalSales),
+        driverEarning: round2(ds.totalDriverEarning),
+        expectedPayout: round2(ds.netCashPayoutToDriver),
+      })),
       deposit: deposit ? {
         cashAmount: round2(deposit.cashAmount),
         cardAmount: round2(deposit.cardAmount),
