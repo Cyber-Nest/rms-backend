@@ -859,11 +859,8 @@ exports.getSalesSummary = async (filters = {}) => {
       totalDriverCashPayout += ds.netCashPayoutToDriver || 0;
     });
 
-    const adjustedExpectedCash = Math.max(
-      0,
-      cashTotal - totalCashExpense - totalDriverCashPayout,
-    );
-    const adjustedPosTotal = Math.max(0, posTotal - totalCashExpense);
+    const adjustedExpectedCash = cashTotal - totalCashExpense - totalDriverCashPayout;
+    const adjustedPosTotal = posTotal;
 
     let shortageOverageCash = 0;
     let shortageOverageCard = 0;
