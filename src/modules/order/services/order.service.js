@@ -6,12 +6,21 @@ const Expense = require("../../expense/models/expense.model");
 const Deposit = require("../models/deposit.model");
 const DriverDropSettlement = require("../../delivery/models/DriverDropSettlement.model");
 const logger = require("../../../shared/utils/logger");
-const { getLocalDateStr, getLocalStartOfDay, getLocalEndOfDay, getLocalHour, getLocalDayName } = require("../../../shared/utils/timezone");
+const {
+  getLocalDateStr,
+  getLocalStartOfDay,
+  getLocalEndOfDay,
+  getLocalHour,
+  getLocalDayName,
+} = require("../../../shared/utils/timezone");
 const stripe = process.env.STRIPE_SECRET_KEY
   ? require("stripe")(process.env.STRIPE_SECRET_KEY)
   : null;
 const Payment = require("../../payment/models/payment.model");
-const { triggerNewOrder, triggerOrderUpdated } = require("../../../config/pusher");
+const {
+  triggerNewOrder,
+  triggerOrderUpdated,
+} = require("../../../config/pusher");
 
 const round2 = (num) => {
   if (typeof num !== "number" || isNaN(num)) return 0;
@@ -20,29 +29,49 @@ const round2 = (num) => {
 
 const buildDateFilter = (start, end, baseFilter = {}) => {
   const normBase = { ...baseFilter };
-  if (normBase.branchId && typeof normBase.branchId === "string" && mongoose.Types.ObjectId.isValid(normBase.branchId)) {
+  if (
+    normBase.branchId &&
+    typeof normBase.branchId === "string" &&
+    mongoose.Types.ObjectId.isValid(normBase.branchId)
+  ) {
     normBase.branchId = new mongoose.Types.ObjectId(normBase.branchId);
   }
   if (start && end) {
     return {
       $or: [
-        { ...normBase, orderTiming: { $ne: "later" }, createdAt: { $gte: start, $lte: end } },
-        { ...normBase, orderTiming: "later", scheduledAt: { $gte: start, $lte: end } }
-      ]
+        {
+          ...normBase,
+          orderTiming: { $ne: "later" },
+          createdAt: { $gte: start, $lte: end },
+        },
+        {
+          ...normBase,
+          orderTiming: "later",
+          scheduledAt: { $gte: start, $lte: end },
+        },
+      ],
     };
   } else if (start) {
     return {
       $or: [
-        { ...normBase, orderTiming: { $ne: "later" }, createdAt: { $gte: start } },
-        { ...normBase, orderTiming: "later", scheduledAt: { $gte: start } }
-      ]
+        {
+          ...normBase,
+          orderTiming: { $ne: "later" },
+          createdAt: { $gte: start },
+        },
+        { ...normBase, orderTiming: "later", scheduledAt: { $gte: start } },
+      ],
     };
   } else if (end) {
     return {
       $or: [
-        { ...normBase, orderTiming: { $ne: "later" }, createdAt: { $lte: end } },
-        { ...normBase, orderTiming: "later", scheduledAt: { $lte: end } }
-      ]
+        {
+          ...normBase,
+          orderTiming: { $ne: "later" },
+          createdAt: { $lte: end },
+        },
+        { ...normBase, orderTiming: "later", scheduledAt: { $lte: end } },
+      ],
     };
   }
   return normBase;
@@ -54,7 +83,7 @@ const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 
 const getProductLookups = async () => {
   const now = Date.now();
-  if (productLookupCache && (now - lastCacheTime < CACHE_DURATION_MS)) {
+  if (productLookupCache && now - lastCacheTime < CACHE_DURATION_MS) {
     return productLookupCache;
   }
 
@@ -65,7 +94,7 @@ const getProductLookups = async () => {
       .select("_id categoryId productId")
       .populate({ path: "categoryId", select: "name" })
       .lean();
-    
+
     for (const p of products) {
       const prodId = p._id ? p._id.toString() : "";
       const catName =
@@ -81,7 +110,8 @@ const getProductLookups = async () => {
     lastCacheTime = now;
   } catch (err) {
     logger.warn(`Could not build product lookup maps: ${err.message}`);
-    if (!productLookupCache) productLookupCache = { categoryMap: {}, idMap: {} };
+    if (!productLookupCache)
+      productLookupCache = { categoryMap: {}, idMap: {} };
   }
   return productLookupCache;
 };
@@ -113,31 +143,44 @@ exports.createOrder = async (orderData) => {
     let paymentIntent = null;
 
     if (orderData.paymentMethod === "stripe" && orderData.paymentIntentId) {
-      if (!stripe) throw new Error("Stripe is not configured. STRIPE_SECRET_KEY is missing.");
+      if (!stripe)
+        throw new Error(
+          "Stripe is not configured. STRIPE_SECRET_KEY is missing.",
+        );
       // Query Stripe
-      paymentIntent = await stripe.paymentIntents.retrieve(orderData.paymentIntentId, {
-        expand: ["payment_method"]
-      });
+      paymentIntent = await stripe.paymentIntents.retrieve(
+        orderData.paymentIntentId,
+        {
+          expand: ["payment_method"],
+        },
+      );
       if (paymentIntent.status !== "succeeded") {
-        throw new Error(`Stripe payment verification failed. Intent status: ${paymentIntent.status}`);
+        throw new Error(
+          `Stripe payment verification failed. Intent status: ${paymentIntent.status}`,
+        );
       }
 
       // Extract card brand, card type (funding), and last 4
       const pmObj = paymentIntent.payment_method || {};
-      const cardDetails = pmObj.card || paymentIntent.charges?.data[0]?.payment_method_details?.card || {};
+      const cardDetails =
+        pmObj.card ||
+        paymentIntent.charges?.data[0]?.payment_method_details?.card ||
+        {};
       const cardBrand = cardDetails.brand || "";
       const cardFunding = cardDetails.funding || "";
       const cardLast4 = cardDetails.last4 || "";
 
       paymentStatus = "paid";
-      payments = [{
-        method: "card",
-        amount: orderData.total,
-        transactionId: orderData.paymentIntentId,
-        cardBrand,
-        cardFunding,
-        cardLast4
-      }];
+      payments = [
+        {
+          method: "card",
+          amount: orderData.total,
+          transactionId: orderData.paymentIntentId,
+          cardBrand,
+          cardFunding,
+          cardLast4,
+        },
+      ];
     }
 
     let dueAt = orderData.dueAt;
@@ -149,13 +192,16 @@ exports.createOrder = async (orderData) => {
         try {
           let b = null;
           if (orderData.branchId) {
-            b = await Branch.findById(orderData.branchId).select("settings").lean();
+            b = await Branch.findById(orderData.branchId)
+              .select("settings")
+              .lean();
           }
           if (!b) {
             b = await Branch.findOne().select("settings").lean();
           }
           if (b?.settings?.mainSettings?.defaultTimeMinutes) {
-            prepTimeMinutes = Number(b.settings.mainSettings.defaultTimeMinutes) || 15;
+            prepTimeMinutes =
+              Number(b.settings.mainSettings.defaultTimeMinutes) || 15;
           }
         } catch (e) {}
         dueAt = new Date(Date.now() + prepTimeMinutes * 60 * 1000);
@@ -175,12 +221,14 @@ exports.createOrder = async (orderData) => {
       payments,
       dueAt,
       tip: Number(orderData.tip) || 0,
-      statusHistory: [{
-        status: "pending",
-        changedAt: new Date(),
-        note: "New order placed",
-        userName: orderData.placedBy || "Manager",
-      }],
+      statusHistory: [
+        {
+          status: "pending",
+          changedAt: new Date(),
+          note: "New order placed",
+          userName: orderData.placedBy || "Manager",
+        },
+      ],
     });
 
     await order.save();
@@ -208,12 +256,14 @@ exports.createOrder = async (orderData) => {
         cardBrand,
         cardFunding,
         cardLast4,
-        rawStripeResponse: paymentIntent
+        rawStripeResponse: paymentIntent,
       });
       await paymentDoc.save();
     }
 
-    logger.info(`Order created: ${orderNumber} for branch: ${order.branchName || 'Main'}`);
+    logger.info(
+      `Order created: ${orderNumber} for branch: ${order.branchName || "Main"}`,
+    );
     return order;
   } catch (error) {
     logger.error(`Order Service Error: createOrder - ${error.message}`);
@@ -231,8 +281,8 @@ exports.getAllOrders = async (filters = {}) => {
     }
 
     if (filters.status) {
-      if (typeof filters.status === 'string' && filters.status.includes(',')) {
-        const statuses = filters.status.split(',');
+      if (typeof filters.status === "string" && filters.status.includes(",")) {
+        const statuses = filters.status.split(",");
         if (filters.excludeReceptionCompleted) {
           query.status = { $in: statuses };
           query.receptionCompleted = { $ne: true };
@@ -250,7 +300,7 @@ exports.getAllOrders = async (filters = {}) => {
     }
     if (filters.orderType) query.orderType = filters.orderType;
     if (filters.paymentStatus) query.paymentStatus = filters.paymentStatus;
-    
+
     if (filters.excludeKitchenCleared) {
       query.kitchenCleared = { $ne: true };
     }
@@ -274,29 +324,28 @@ exports.getAllOrders = async (filters = {}) => {
 
     // Server-side search filter
     if (filters.search) {
-      const searchRegex = new RegExp(filters.search.trim(), 'i');
+      const searchRegex = new RegExp(filters.search.trim(), "i");
       const searchOr = [
         { orderNumber: searchRegex },
         { "customer.name": searchRegex },
-        { "customer.phone": searchRegex }
+        { "customer.phone": searchRegex },
       ];
       if (query.$or) {
-        query.$and = [
-          { $or: query.$or },
-          { $or: searchOr }
-        ];
+        query.$and = [{ $or: query.$or }, { $or: searchOr }];
         delete query.$or;
       } else {
         query.$or = searchOr;
       }
     }
 
-    let selectFields = "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt receptionCompleted";
+    let selectFields =
+      "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt receptionCompleted";
     if (filters.fields) {
-      selectFields = filters.fields.split(',').join(' ');
+      selectFields = filters.fields.split(",").join(" ");
     }
 
-    const isPaginated = filters.page !== undefined || filters.limit !== undefined;
+    const isPaginated =
+      filters.page !== undefined || filters.limit !== undefined;
 
     if (isPaginated) {
       const page = Math.max(1, parseInt(filters.page) || 1);
@@ -310,7 +359,7 @@ exports.getAllOrders = async (filters = {}) => {
           .skip(skip)
           .limit(limit)
           .lean(),
-        Order.countDocuments(query)
+        Order.countDocuments(query),
       ]);
 
       return {
@@ -319,11 +368,11 @@ exports.getAllOrders = async (filters = {}) => {
           page,
           limit,
           total,
-          totalPages: Math.ceil(total / limit)
-        }
+          totalPages: Math.ceil(total / limit),
+        },
       };
     } else {
-      // Non-paginated 
+      // Non-paginated
       const orders = await Order.find(query)
         .select(selectFields)
         .sort({ createdAt: -1 })
@@ -350,7 +399,13 @@ exports.getOrderById = async (id) => {
 };
 
 // ── Update Order Status ───────────────────────────────────────
-exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = undefined, userName = "Manager") => {
+exports.updateOrderStatus = async (
+  id,
+  status,
+  note = "",
+  receptionCompleted = undefined,
+  userName = "Manager",
+) => {
   try {
     const validTransitions = {
       pending: ["preparing", "ready", "cancelled"],
@@ -369,16 +424,25 @@ exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = u
         order.receptionCompleted = receptionCompleted;
       }
       if (note) {
-        order.statusHistory.push({ status, changedAt: new Date(), note, userName });
+        order.statusHistory.push({
+          status,
+          changedAt: new Date(),
+          note,
+          userName,
+        });
       }
       await order.save();
 
       // Trigger real-time notification via Pusher
       triggerOrderUpdated(order).catch((err) => {
-        logger.error(`Error triggering real-time update Pusher event: ${err.message}`);
+        logger.error(
+          `Error triggering real-time update Pusher event: ${err.message}`,
+        );
       });
 
-      logger.info(`Order ${order.orderNumber} updated (status remained ${status}, receptionCompleted set to ${receptionCompleted})`);
+      logger.info(
+        `Order ${order.orderNumber} updated (status remained ${status}, receptionCompleted set to ${receptionCompleted})`,
+      );
       return order;
     }
 
@@ -398,10 +462,14 @@ exports.updateOrderStatus = async (id, status, note = "", receptionCompleted = u
 
     // Trigger real-time notification via Pusher
     triggerOrderUpdated(order).catch((err) => {
-      logger.error(`Error triggering real-time update Pusher event: ${err.message}`);
+      logger.error(
+        `Error triggering real-time update Pusher event: ${err.message}`,
+      );
     });
 
-    logger.info(`Order ${order.orderNumber} status → ${status} (receptionCompleted: ${receptionCompleted})`);
+    logger.info(
+      `Order ${order.orderNumber} status → ${status} (receptionCompleted: ${receptionCompleted})`,
+    );
     return order;
   } catch (error) {
     logger.error(`Order Service Error: updateOrderStatus - ${error.message}`);
@@ -417,12 +485,19 @@ exports.kitchenClear = async (id, userName = "Manager") => {
 
     if (!order.kitchenCleared) {
       order.kitchenCleared = true;
-      order.statusHistory.push({ status: order.status, changedAt: new Date(), note: "Cleared from kitchen (Handed over)", userName });
+      order.statusHistory.push({
+        status: order.status,
+        changedAt: new Date(),
+        note: "Cleared from kitchen (Handed over)",
+        userName,
+      });
       await order.save();
 
       // Trigger real-time notification via Pusher
       triggerOrderUpdated(order).catch((err) => {
-        logger.error(`Error triggering real-time update Pusher event: ${err.message}`);
+        logger.error(
+          `Error triggering real-time update Pusher event: ${err.message}`,
+        );
       });
       logger.info(`Order ${order.orderNumber} cleared from kitchen.`);
     }
@@ -443,15 +518,15 @@ exports.markOrderPaid = async (id, payments) => {
     if (payments && payments.length > 0) {
       order.payments = [...(order.payments || []), ...payments];
 
-      // Batch insert Payment audit documents in DB 
-      const paymentDocs = payments.map(p => ({
+      // Batch insert Payment audit documents in DB
+      const paymentDocs = payments.map((p) => ({
         orderId: order._id,
         orderNumber: order.orderNumber,
         amount: p.amount,
         paymentMethod: p.method === "cash" ? "cash" : "card",
         status: "succeeded",
         cashGiven: p.cashGiven || 0,
-        changeGiven: p.changeGiven || 0
+        changeGiven: p.changeGiven || 0,
       }));
       await Payment.insertMany(paymentDocs);
     }
@@ -486,9 +561,11 @@ exports.cancelOrder = async (id) => {
       { _id: id, status: { $nin: ["completed", "cancelled"] } },
       {
         $set: { status: "cancelled" },
-        $push: { statusHistory: { status: "cancelled", changedAt: new Date() } }
+        $push: {
+          statusHistory: { status: "cancelled", changedAt: new Date() },
+        },
       },
-      { new: true }
+      { new: true },
     );
     if (!order) {
       // Check if order exists to give specific error
@@ -522,7 +599,7 @@ exports.updateOrderDueTime = async (id, dueAt) => {
     const order = await Order.findByIdAndUpdate(
       id,
       { $set: { dueAt: new Date(dueAt) } },
-      { new: true }
+      { new: true },
     );
     if (!order) throw new Error("Order not found.");
 
@@ -609,16 +686,37 @@ exports.getSalesSummary = async (filters = {}) => {
     }
 
     // ── Parallel fetch: orders + deposit + expenses + product lookups ──
-    const expQuery = { ...(filters.branchId ? { branchId: filters.branchId } : {}) };
+    const expQuery = {};
+    if (filters.branchId) {
+      if (mongoose.Types.ObjectId.isValid(filters.branchId)) {
+        expQuery.$or = [
+          { branchId: new mongoose.Types.ObjectId(filters.branchId) },
+          { branchId: filters.branchId },
+        ];
+      } else {
+        expQuery.branchId = filters.branchId;
+      }
+    }
     if (start && end) {
       expQuery.expenseDate = { $gte: start, $lte: end };
     }
 
-    const dropQuery = { ...(filters.branchId ? { branchId: filters.branchId } : {}), date: targetDateStr };
+    const dropQuery = {
+      ...(filters.branchId ? { branchId: filters.branchId } : {}),
+      date: targetDateStr,
+    };
 
-    const [orders, deposit, expensesList, { categoryMap: productCategoryMap }, driverSettlements] = await Promise.all([
+    const [
+      orders,
+      deposit,
+      expensesList,
+      { categoryMap: productCategoryMap },
+      driverSettlements,
+    ] = await Promise.all([
       Order.find(query)
-        .select("status tip total subtotal tax discount orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod")
+        .select(
+          "status tip total subtotal tax discount orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod",
+        )
         .lean(),
       Deposit.findOne({ date: targetDateStr }).lean(),
       Expense.find(expQuery)
@@ -626,10 +724,10 @@ exports.getSalesSummary = async (filters = {}) => {
         .lean()
         .catch(() => []),
       getProductLookups(),
-      DriverDropSettlement.find(dropQuery).lean().catch(() => []),
+      DriverDropSettlement.find(dropQuery)
+        .lean()
+        .catch(() => []),
     ]);
-
-
 
     // 1. Completed & Cancelled Orders
     let completedCount = 0;
@@ -643,23 +741,19 @@ exports.getSalesSummary = async (filters = {}) => {
     let grossDiscount = 0;
     let grandTotal = 0;
 
-    
     const categorySales = {};
 
-    
     let takeoutTotal = 0;
     let dineInTotal = 0;
     let driveThroughTotal = 0;
     let deliveryTotal = 0;
 
-    
     let onlineTotal = 0;
     let posTotal = 0;
     let doordashTotal = 0;
     let skipTotal = 0;
     let ubereatsTotal = 0;
 
-    
     let cashTotal = 0;
     let cardTotal = 0;
     let accountPayTotal = 0;
@@ -670,7 +764,6 @@ exports.getSalesSummary = async (filters = {}) => {
     let debitCardTotal = 0;
     let totalTips = 0;
 
-    
     for (const order of orders) {
       if (order.status === "cancelled") {
         cancelledCount += 1;
@@ -685,32 +778,33 @@ exports.getSalesSummary = async (filters = {}) => {
         grandTotal += order.total || 0;
         totalTips += order.tip || 0;
 
-        
         if (order.orderType === "takeout") takeoutTotal += order.total;
         else if (order.orderType === "dine-in") dineInTotal += order.total;
         else if (order.orderType === "drive-through")
           driveThroughTotal += order.total;
-        else if (order.orderType === "delivery")
-          deliveryTotal += order.total;
+        else if (order.orderType === "delivery") deliveryTotal += order.total;
 
-        
         if (order.orderSource === "online") onlineTotal += order.total;
         else if (order.orderSource === "doordash") doordashTotal += order.total;
         else if (order.orderSource === "skip") skipTotal += order.total;
         else if (order.orderSource === "ubereats") ubereatsTotal += order.total;
         else posTotal += order.total;
 
-        
         if (order.paymentStatus === "paid") {
           if (order.payments && order.payments.length > 0) {
             for (const p of order.payments) {
-              if (["online", "doordash", "skip", "ubereats"].includes(order.orderSource) || p.method === "stripe") {
+              if (
+                ["online", "doordash", "skip", "ubereats"].includes(
+                  order.orderSource,
+                ) ||
+                p.method === "stripe"
+              ) {
                 accountPayTotal += p.amount;
               } else if (p.method === "cash") {
                 cashTotal += p.amount;
               } else {
                 cardTotal += p.amount;
-                
+
                 const brand = p.cardBrand?.toLowerCase() || "";
                 if (brand === "visa") visaTotal += p.amount;
                 else if (brand === "mastercard") mastercardTotal += p.amount;
@@ -722,8 +816,12 @@ exports.getSalesSummary = async (filters = {}) => {
               }
             }
           } else {
-            
-            if (["online", "doordash", "skip", "ubereats"].includes(order.orderSource) || order.paymentMethod === "stripe") {
+            if (
+              ["online", "doordash", "skip", "ubereats"].includes(
+                order.orderSource,
+              ) ||
+              order.paymentMethod === "stripe"
+            ) {
               accountPayTotal += order.total;
             } else {
               cashTotal += order.total;
@@ -731,7 +829,6 @@ exports.getSalesSummary = async (filters = {}) => {
           }
         }
 
-        
         if (order.items && Array.isArray(order.items)) {
           for (const item of order.items) {
             const itemProdId = item.menuItemId || "";
@@ -748,10 +845,9 @@ exports.getSalesSummary = async (filters = {}) => {
       }
     }
 
-
     let totalCashExpense = 0;
     const rawExpenses = [];
-    for (const e of (expensesList || [])) {
+    for (const e of expensesList || []) {
       rawExpenses.push(e);
       if (e.paymentMode !== "card") {
         totalCashExpense += e.amount || 0;
@@ -763,7 +859,10 @@ exports.getSalesSummary = async (filters = {}) => {
       totalDriverCashPayout += ds.netCashPayoutToDriver || 0;
     });
 
-    const adjustedExpectedCash = Math.max(0, cashTotal - totalCashExpense - totalDriverCashPayout);
+    const adjustedExpectedCash = Math.max(
+      0,
+      cashTotal - totalCashExpense - totalDriverCashPayout,
+    );
     const adjustedPosTotal = Math.max(0, posTotal - totalCashExpense);
 
     let shortageOverageCash = 0;
@@ -781,8 +880,14 @@ exports.getSalesSummary = async (filters = {}) => {
         startDate: filters.startDate,
         endDate: filters.endDate || filters.date,
       },
-      completedOrders: { count: completedCount, totalAmount: round2(completedTotal) },
-      cancelledOrders: { count: cancelledCount, totalAmount: round2(cancelledTotal) },
+      completedOrders: {
+        count: completedCount,
+        totalAmount: round2(completedTotal),
+      },
+      cancelledOrders: {
+        count: cancelledCount,
+        totalAmount: round2(cancelledTotal),
+      },
       refundOrders: { count: 0, totalAmount: 0 },
       financials: {
         allCategoryTotal: round2(grossSubtotal),
@@ -803,7 +908,12 @@ exports.getSalesSummary = async (filters = {}) => {
         percentageDiscount: round2(grossDiscount),
         total: round2(grossDiscount),
       },
-      taxSummary: { pst: 0, gst: round2(grossTax), hst: 0, total: round2(grossTax) },
+      taxSummary: {
+        pst: 0,
+        gst: round2(grossTax),
+        hst: 0,
+        total: round2(grossTax),
+      },
       salesReceived: {
         accountPay: round2(accountPayTotal),
         cash: round2(cashTotal),
@@ -814,8 +924,16 @@ exports.getSalesSummary = async (filters = {}) => {
         finalAmount: round2(grandTotal),
       },
       cardTypeReceived: {
-        interac: { total: round2(interacTotal), tips: 0, final: round2(interacTotal) },
-        mastercard: { total: round2(mastercardTotal), tips: 0, final: round2(mastercardTotal) },
+        interac: {
+          total: round2(interacTotal),
+          tips: 0,
+          final: round2(interacTotal),
+        },
+        mastercard: {
+          total: round2(mastercardTotal),
+          tips: 0,
+          final: round2(mastercardTotal),
+        },
         visa: { total: round2(visaTotal), tips: 0, final: round2(visaTotal) },
         total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
       },
@@ -834,7 +952,10 @@ exports.getSalesSummary = async (filters = {}) => {
         pos: round2(adjustedPosTotal),
       },
       expense: rawExpenses.map((e) => ({
-        employee: e.expenseType === "store" ? "Store Expense" : e.employeeName || "Manager",
+        employee:
+          e.expenseType === "store"
+            ? "Store Expense"
+            : e.employeeName || "Manager",
         pst: round2(e.pst || 0),
         gst: round2(e.gst || 0),
         hst: round2(e.hst || 0),
@@ -846,7 +967,11 @@ exports.getSalesSummary = async (filters = {}) => {
         card: round2(shortageOverageCard),
         accountPay: round2(shortageOverageAccountPay),
       },
-      moneyToBeCollected: { cash: round2(adjustedExpectedCash), card: round2(cardTotal), accountPay: round2(accountPayTotal) },
+      moneyToBeCollected: {
+        cash: round2(adjustedExpectedCash),
+        card: round2(cardTotal),
+        accountPay: round2(accountPayTotal),
+      },
       driverReport: (driverSettlements || []).map((ds) => ({
         driverName: ds.driverName,
         deliveryCount: ds.totalOrders,
@@ -860,11 +985,13 @@ exports.getSalesSummary = async (filters = {}) => {
         driverEarning: round2(ds.totalDriverEarning),
         expectedPayout: round2(ds.netCashPayoutToDriver),
       })),
-      deposit: deposit ? {
-        cashAmount: round2(deposit.cashAmount),
-        cardAmount: round2(deposit.cardAmount),
-        accountPayAmount: round2(deposit.accountPayAmount),
-      } : null,
+      deposit: deposit
+        ? {
+            cashAmount: round2(deposit.cashAmount),
+            cardAmount: round2(deposit.cardAmount),
+            accountPayAmount: round2(deposit.accountPayAmount),
+          }
+        : null,
     };
   } catch (error) {
     logger.error(`Order Service Error: getSalesSummary - ${error.message}`);
@@ -872,10 +999,10 @@ exports.getSalesSummary = async (filters = {}) => {
   }
 };
 
-
 exports.saveDeposit = async (depositData) => {
   try {
-    const { date, cashAmount, cardAmount, accountPayAmount, branchId } = depositData;
+    const { date, cashAmount, cardAmount, accountPayAmount, branchId } =
+      depositData;
     if (!date) throw new Error("Deposit date is required.");
 
     const query = { date, ...(branchId ? { branchId } : {}) };
@@ -885,9 +1012,9 @@ exports.saveDeposit = async (depositData) => {
         cashAmount: cashAmount !== undefined ? cashAmount : 0,
         cardAmount: cardAmount !== undefined ? cardAmount : 0,
         accountPayAmount: accountPayAmount !== undefined ? accountPayAmount : 0,
-        ...(branchId ? { branchId } : {})
+        ...(branchId ? { branchId } : {}),
       },
-      { returnDocument: "after", upsert: true }
+      { returnDocument: "after", upsert: true },
     );
     return deposit;
   } catch (error) {
@@ -896,12 +1023,11 @@ exports.saveDeposit = async (depositData) => {
   }
 };
 
-
 exports.getDashboardMetrics = async (filters = {}) => {
   try {
     const targetDateStr = filters.date || getLocalDateStr();
     const TIMEZONE = "America/Edmonton";
-    
+
     // Use local timezone day boundaries
     const todayStart = getLocalStartOfDay(targetDateStr);
     const todayEnd = getLocalEndOfDay(targetDateStr);
@@ -917,84 +1043,137 @@ exports.getDashboardMetrics = async (filters = {}) => {
       ? { branchId: new mongoose.Types.ObjectId(filters.branchId) }
       : {};
 
-    const dateMatchFilter = buildDateFilter(past30DaysStart, todayEnd, branchIdFilter);
-    const todayDateFilter = buildDateFilter(todayStart, todayEnd, branchIdFilter);
+    const dateMatchFilter = buildDateFilter(
+      past30DaysStart,
+      todayEnd,
+      branchIdFilter,
+    );
+    const todayDateFilter = buildDateFilter(
+      todayStart,
+      todayEnd,
+      branchIdFilter,
+    );
 
     // Single aggregation for today's metrics, popular days, and popular food
     const [aggResult] = await Order.aggregate([
       { $match: dateMatchFilter },
-      { $facet: {
+      {
+        $facet: {
           // Today's orders: count + earnings
           todayMetrics: [
             { $match: todayDateFilter },
-            { $group: {
+            {
+              $group: {
                 _id: null,
                 totalOrders: { $sum: 1 },
-                totalEarnings: { $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$total", 0] } }
-            }}
+                totalEarnings: {
+                  $sum: {
+                    $cond: [{ $ne: ["$status", "cancelled"] }, "$total", 0],
+                  },
+                },
+              },
+            },
           ],
           // Popular days (30-day, non-cancelled)
           popularDays: [
             { $match: { status: { $ne: "cancelled" } } },
-            { $addFields: {
-                businessDate: { $cond: [
-                  { $eq: ["$orderTiming", "later"] },
-                  "$scheduledAt",
-                  "$createdAt"
-                ]}
-            }},
-            { $group: {
-                _id: { $dayOfWeek: { date: "$businessDate", timezone: TIMEZONE } },
-                count: { $sum: 1 }
-            }}
+            {
+              $addFields: {
+                businessDate: {
+                  $cond: [
+                    { $eq: ["$orderTiming", "later"] },
+                    "$scheduledAt",
+                    "$createdAt",
+                  ],
+                },
+              },
+            },
+            {
+              $group: {
+                _id: {
+                  $dayOfWeek: { date: "$businessDate", timezone: TIMEZONE },
+                },
+                count: { $sum: 1 },
+              },
+            },
           ],
           // Popular food items (30-day, non-cancelled)
           popularFood: [
             { $match: { status: { $ne: "cancelled" } } },
             { $unwind: "$items" },
-            { $group: { _id: "$items.name", value: { $sum: "$items.quantity" } } },
+            {
+              $group: {
+                _id: "$items.name",
+                value: { $sum: "$items.quantity" },
+              },
+            },
             { $sort: { value: -1 } },
-            { $limit: 7 }
+            { $limit: 7 },
           ],
           // Customer tracking — minimal fields for new/returning detection
           customerData: [
             { $match: todayDateFilter },
-            { $project: {
+            {
+              $project: {
                 phone: "$customer.phone",
                 email: "$customer.email",
-                orderTiming: 1, scheduledAt: 1, createdAt: 1
-            }}
+                orderTiming: 1,
+                scheduledAt: 1,
+                createdAt: 1,
+              },
+            },
           ],
           // All customer earliest dates (30 days) for new/returning logic
           allCustomerDates: [
-            { $project: {
+            {
+              $project: {
                 phone: "$customer.phone",
                 email: "$customer.email",
-                orderTiming: 1, scheduledAt: 1, createdAt: 1
-            }}
-          ]
-      }}
+                orderTiming: 1,
+                scheduledAt: 1,
+                createdAt: 1,
+              },
+            },
+          ],
+        },
+      },
     ]);
 
     // Today metrics
-    const todayMetrics = aggResult?.todayMetrics?.[0] || { totalOrders: 0, totalEarnings: 0 };
+    const todayMetrics = aggResult?.todayMetrics?.[0] || {
+      totalOrders: 0,
+      totalEarnings: 0,
+    };
 
-    // Popular days 
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    // Popular days
+    const dayNames = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
     const popularDaysData = (aggResult?.popularDays || [])
-      .map(d => ({ name: dayNames[d._id - 1] || 'Unknown', value: d.count }))
-      .filter(d => d.value > 0);
+      .map((d) => ({ name: dayNames[d._id - 1] || "Unknown", value: d.count }))
+      .filter((d) => d.value > 0);
 
     // Popular food
     let popularFoodData = aggResult?.popularFood || [];
     if (popularFoodData.length > 6) {
       const top6 = popularFoodData.slice(0, 6);
-      const otherVal = popularFoodData.slice(6).reduce((sum, item) => sum + item.value, 0);
-      popularFoodData = [...top6, { _id: 'Other Items', value: otherVal }];
+      const otherVal = popularFoodData
+        .slice(6)
+        .reduce((sum, item) => sum + item.value, 0);
+      popularFoodData = [...top6, { _id: "Other Items", value: otherVal }];
     }
-    popularFoodData = popularFoodData.map(f => ({ name: f._id || f.name || 'Unknown', value: f.value }));
+    popularFoodData = popularFoodData.map((f) => ({
+      name: f._id || f.name || "Unknown",
+      value: f.value,
+    }));
     if (popularFoodData.length === 0) {
-      popularFoodData = [{ name: 'No Menu Items Sold', value: 0 }];
+      popularFoodData = [{ name: "No Menu Items Sold", value: 0 }];
     }
 
     // New vs returning customers (lightweight JS — only today's orders)
@@ -1003,7 +1182,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
     const phoneToEarliestDate = new Map();
     const emailToEarliestDate = new Map();
 
-    for (const order of (aggResult?.allCustomerDates || [])) {
+    for (const order of aggResult?.allCustomerDates || []) {
       const orderDate = getOrderBusinessDate(order);
       const phone = order.phone?.trim();
       const email = order.email?.trim();
@@ -1022,7 +1201,7 @@ exports.getDashboardMetrics = async (filters = {}) => {
     }
 
     const seenCustomers = new Set();
-    for (const order of (aggResult?.customerData || [])) {
+    for (const order of aggResult?.customerData || []) {
       const phone = order.phone?.trim();
       const email = order.email?.trim();
       const customerKey = phone || email;
@@ -1033,10 +1212,12 @@ exports.getDashboardMetrics = async (filters = {}) => {
 
       let hasPrev = false;
       if (phone && phoneToEarliestDate.has(phone)) {
-        if (new Date(phoneToEarliestDate.get(phone)) < todayStart) hasPrev = true;
+        if (new Date(phoneToEarliestDate.get(phone)) < todayStart)
+          hasPrev = true;
       }
       if (!hasPrev && email && emailToEarliestDate.has(email)) {
-        if (new Date(emailToEarliestDate.get(email)) < todayStart) hasPrev = true;
+        if (new Date(emailToEarliestDate.get(email)) < todayStart)
+          hasPrev = true;
       }
       if (hasPrev) returningCustomers += 1;
       else newCustomers += 1;
@@ -1048,15 +1229,13 @@ exports.getDashboardMetrics = async (filters = {}) => {
       newCustomers,
       returningCustomers,
       popularDaysData,
-      popularFoodData
+      popularFoodData,
     };
   } catch (error) {
     logger.error(`Order Service Error: getDashboardMetrics - ${error.message}`);
     throw error;
   }
 };
-
-
 
 exports.getUniqueCustomers = async (filters = {}) => {
   try {
@@ -1065,21 +1244,40 @@ exports.getUniqueCustomers = async (filters = {}) => {
     let matchQuery = {
       "customer.name": { $exists: true, $nin: ["", null] },
       $or: [
-        { "customer.phone": { $exists: true, $nin: ["", "No phone", "No Phone", null] } },
-        { "customer.email": { $exists: true, $nin: ["", "No email", "No Email", null] } }
-      ]
+        {
+          "customer.phone": {
+            $exists: true,
+            $nin: ["", "No phone", "No Phone", null],
+          },
+        },
+        {
+          "customer.email": {
+            $exists: true,
+            $nin: ["", "No email", "No Email", null],
+          },
+        },
+      ],
     };
 
-    
     if (filters.date) {
       const start = getLocalStartOfDay(filters.date);
       const end = getLocalEndOfDay(filters.date);
       matchQuery = buildDateFilter(start, end, {
         "customer.name": { $exists: true, $nin: ["", null] },
         $or: [
-          { "customer.phone": { $exists: true, $nin: ["", "No phone", "No Phone", null] } },
-          { "customer.email": { $exists: true, $nin: ["", "No email", "No Email", null] } }
-        ]
+          {
+            "customer.phone": {
+              $exists: true,
+              $nin: ["", "No phone", "No Phone", null],
+            },
+          },
+          {
+            "customer.email": {
+              $exists: true,
+              $nin: ["", "No email", "No Email", null],
+            },
+          },
+        ],
       });
     }
 
@@ -1091,18 +1289,19 @@ exports.getUniqueCustomers = async (filters = {}) => {
 
     pipeline.push({ $sort: { createdAt: -1 } });
 
-    
     pipeline.push({
       $group: {
         _id: {
           $cond: [
-            { $and: [
-              { $ifNull: ["$customer.phone", false] },
-              { $ne: ["$customer.phone", ""] }
-            ]},
+            {
+              $and: [
+                { $ifNull: ["$customer.phone", false] },
+                { $ne: ["$customer.phone", ""] },
+              ],
+            },
             "$customer.phone",
-            "$customer.email"
-          ]
+            "$customer.email",
+          ],
         },
         firstName: { $first: "$customer.name" },
         phone: { $first: "$customer.phone" },
@@ -1110,16 +1309,15 @@ exports.getUniqueCustomers = async (filters = {}) => {
         address: { $first: "$customer.address" },
         postalCode: { $first: "$customer.postalCode" },
         updatedDate: { $first: "$updatedAt" },
-        lastOrderDate: { $first: "$createdAt" }
-      }
+        lastOrderDate: { $first: "$createdAt" },
+      },
     });
 
-    
     pipeline.push({ $sort: { lastOrderDate: -1 } });
 
     let results = await Order.aggregate(pipeline);
 
-    let customers = results.map(c => {
+    let customers = results.map((c) => {
       const nameParts = (c.firstName || "").trim().split(/\s+/);
       const fName = nameParts[0] || "";
       const lName = nameParts.slice(1).join(" ") || "";
@@ -1131,7 +1329,7 @@ exports.getUniqueCustomers = async (filters = {}) => {
         updatedDate: c.updatedDate || c.lastOrderDate,
         lastOrderDate: c.lastOrderDate,
         address: c.address || "",
-        postalCode: c.postalCode || ""
+        postalCode: c.postalCode || "",
       };
     });
 
@@ -1141,7 +1339,6 @@ exports.getUniqueCustomers = async (filters = {}) => {
     throw error;
   }
 };
-
 
 exports.getReportsSummary = async (filters = {}) => {
   try {
@@ -1159,7 +1356,7 @@ exports.getReportsSummary = async (filters = {}) => {
       ? { branchId: new mongoose.Types.ObjectId(filters.branchId) }
       : {};
     const dateFilter = buildDateFilter(start, end, baseFilter);
-    
+
     // Get cached product lookup maps
     const { categoryMap: productCategoryMap } = await getProductLookups();
 
@@ -1170,161 +1367,219 @@ exports.getReportsSummary = async (filters = {}) => {
     pipeline.push({
       $facet: {
         totals: [
-            {
-              $group: {
-                _id: null,
-                completedCount: {
-                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, 1, 0] }
+          {
+            $group: {
+              _id: null,
+              completedCount: {
+                $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, 1, 0] },
+              },
+              completedTotal: {
+                $sum: {
+                  $cond: [{ $ne: ["$status", "cancelled"] }, "$total", 0],
                 },
-                completedTotal: {
-                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$total", 0] }
+              },
+              cancelledCount: {
+                $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+              },
+              cancelledTotal: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "cancelled"] }, "$total", 0],
                 },
-                cancelledCount: {
-                  $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] }
+              },
+              grossSubtotal: {
+                $sum: {
+                  $cond: [{ $ne: ["$status", "cancelled"] }, "$subtotal", 0],
                 },
-                cancelledTotal: {
-                  $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, "$total", 0] }
+              },
+              grossTax: {
+                $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$tax", 0] },
+              },
+              grossDiscount: {
+                $sum: {
+                  $cond: [{ $ne: ["$status", "cancelled"] }, "$discount", 0],
                 },
-                grossSubtotal: {
-                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$subtotal", 0] }
-                },
-                grossTax: {
-                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$tax", 0] }
-                },
-                grossDiscount: {
-                  $sum: { $cond: [{ $ne: ["$status", "cancelled"] }, "$discount", 0] }
-                },
-                takeoutTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "takeout"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                dineInTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "dine-in"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                driveThroughTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "drive-through"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                deliveryTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "delivery"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                onlineTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "online"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                posTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "pos"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                doordashTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "doordash"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                skipTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "skip"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                },
-                ubereatsTotal: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "ubereats"] }] },
-                      "$total",
-                      0
-                    ]
-                  }
-                }
-              }
-            }
-          ],
-          payments: [
-            {
-              $match: {
-                status: { $ne: "cancelled" },
-                paymentStatus: "paid"
-              }
-            },
-            {
-              $project: {
-                total: 1,
-                orderSource: 1,
-                payments: {
+              },
+              takeoutTotal: {
+                $sum: {
                   $cond: [
-                    { $gt: [{ $size: { $ifNull: ["$payments", []] } }, 0] },
-                    "$payments",
-                    [{ method: "cash", amount: "$total" }]
-                  ]
-                }
-              }
-            },
-            { $unwind: "$payments" },
-            {
-              $group: {
-                _id: {
-                  method: "$payments.method",
-                  brand: "$payments.cardBrand",
-                  funding: "$payments.cardFunding",
-                  orderSource: "$orderSource"
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderType", "takeout"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
                 },
-                amount: { $sum: "$payments.amount" }
-              }
-            }
-          ],
-          items: [
-            { $match: { status: { $ne: "cancelled" } } },
-            { $unwind: "$items" },
-            {
-              $group: {
-                _id: "$items.menuItemId",
-                total: {
-                  $sum: { $ifNull: ["$items.totalPrice", { $multiply: ["$items.basePrice", "$items.quantity"] }] }
-                }
-              }
-            }
-          ]
-        }
-      });
+              },
+              dineInTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderType", "dine-in"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+              driveThroughTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderType", "drive-through"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+              deliveryTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderType", "delivery"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+              onlineTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderSource", "online"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+              posTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderSource", "pos"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+              doordashTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderSource", "doordash"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+              skipTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderSource", "skip"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+              ubereatsTotal: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$status", "cancelled"] },
+                        { $eq: ["$orderSource", "ubereats"] },
+                      ],
+                    },
+                    "$total",
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+        ],
+        payments: [
+          {
+            $match: {
+              status: { $ne: "cancelled" },
+              paymentStatus: "paid",
+            },
+          },
+          {
+            $project: {
+              total: 1,
+              orderSource: 1,
+              payments: {
+                $cond: [
+                  { $gt: [{ $size: { $ifNull: ["$payments", []] } }, 0] },
+                  "$payments",
+                  [{ method: "cash", amount: "$total" }],
+                ],
+              },
+            },
+          },
+          { $unwind: "$payments" },
+          {
+            $group: {
+              _id: {
+                method: "$payments.method",
+                brand: "$payments.cardBrand",
+                funding: "$payments.cardFunding",
+                orderSource: "$orderSource",
+              },
+              amount: { $sum: "$payments.amount" },
+            },
+          },
+        ],
+        items: [
+          { $match: { status: { $ne: "cancelled" } } },
+          { $unwind: "$items" },
+          {
+            $group: {
+              _id: "$items.menuItemId",
+              total: {
+                $sum: {
+                  $ifNull: [
+                    "$items.totalPrice",
+                    { $multiply: ["$items.basePrice", "$items.quantity"] },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
     const [summaryResult] = await Order.aggregate(pipeline);
 
     const totals = summaryResult?.totals?.[0] || {
@@ -1342,10 +1597,9 @@ exports.getReportsSummary = async (filters = {}) => {
       posTotal: 0,
       doordashTotal: 0,
       skipTotal: 0,
-      ubereatsTotal: 0
+      ubereatsTotal: 0,
     };
 
-    
     const categorySalesMap = {};
     if (summaryResult?.items) {
       for (const itemGroup of summaryResult.items) {
@@ -1356,12 +1610,13 @@ exports.getReportsSummary = async (filters = {}) => {
       }
     }
 
-    const categorySales = Object.entries(categorySalesMap).map(([name, total]) => ({
-      name,
-      total: round2(total)
-    }));
+    const categorySales = Object.entries(categorySalesMap).map(
+      ([name, total]) => ({
+        name,
+        total: round2(total),
+      }),
+    );
 
-    
     let cashTotal = 0;
     let cardTotal = 0;
     let accountPayTotal = 0;
@@ -1378,7 +1633,10 @@ exports.getReportsSummary = async (filters = {}) => {
         const funding = p._id?.funding?.toLowerCase() || "";
         const orderSource = p._id?.orderSource;
 
-        if (["online", "doordash", "skip", "ubereats"].includes(orderSource) || method === "stripe") {
+        if (
+          ["online", "doordash", "skip", "ubereats"].includes(orderSource) ||
+          method === "stripe"
+        ) {
           accountPayTotal += p.amount;
         } else if (method === "cash") {
           cashTotal += p.amount;
@@ -1412,12 +1670,15 @@ exports.getReportsSummary = async (filters = {}) => {
 
       for (const e of expensesList) {
         rawExpenses.push({
-          employee: e.expenseType === "store" ? "Store Expense" : e.employeeName || "Manager",
+          employee:
+            e.expenseType === "store"
+              ? "Store Expense"
+              : e.employeeName || "Manager",
           pst: round2(e.pst || 0),
           gst: round2(e.gst || 0),
           hst: round2(e.hst || 0),
           total: round2(e.amount || 0),
-          paymentMode: e.paymentMode || "cash"
+          paymentMode: e.paymentMode || "cash",
         });
         if (e.paymentMode !== "card") {
           totalCashExpense += e.amount || 0;
@@ -1432,11 +1693,11 @@ exports.getReportsSummary = async (filters = {}) => {
     return {
       completedOrders: {
         count: totals.completedCount,
-        totalAmount: round2(totals.completedTotal)
+        totalAmount: round2(totals.completedTotal),
       },
       cancelledOrders: {
         count: totals.cancelledCount,
-        totalAmount: round2(totals.cancelledTotal)
+        totalAmount: round2(totals.cancelledTotal),
       },
       refundOrders: { count: 0, totalAmount: 0 },
       financials: {
@@ -1448,18 +1709,18 @@ exports.getReportsSummary = async (filters = {}) => {
         tax: round2(totals.grossTax),
         grandTotal: round2(totals.completedTotal),
         tips: 0,
-        finalAmount: round2(totals.completedTotal)
+        finalAmount: round2(totals.completedTotal),
       },
       categorySales,
       discountSummary: {
         percentageDiscount: round2(totals.grossDiscount),
-        total: round2(totals.grossDiscount)
+        total: round2(totals.grossDiscount),
       },
       taxSummary: {
         pst: 0,
         gst: round2(totals.grossTax),
         hst: 0,
-        total: round2(totals.grossTax)
+        total: round2(totals.grossTax),
       },
       salesReceived: {
         accountPay: round2(accountPayTotal),
@@ -1468,29 +1729,37 @@ exports.getReportsSummary = async (filters = {}) => {
         debitCardSales: round2(debitCardTotal),
         grandTotal: round2(totals.completedTotal),
         tips: 0,
-        finalAmount: round2(totals.completedTotal)
+        finalAmount: round2(totals.completedTotal),
       },
       cardTypeReceived: {
-        interac: { total: round2(interacTotal), tips: 0, final: round2(interacTotal) },
-        mastercard: { total: round2(mastercardTotal), tips: 0, final: round2(mastercardTotal) },
+        interac: {
+          total: round2(interacTotal),
+          tips: 0,
+          final: round2(interacTotal),
+        },
+        mastercard: {
+          total: round2(mastercardTotal),
+          tips: 0,
+          final: round2(mastercardTotal),
+        },
         visa: { total: round2(visaTotal), tips: 0, final: round2(visaTotal) },
-        total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) }
+        total: { total: round2(cardTotal), tips: 0, final: round2(cardTotal) },
       },
       orderTypeSummary: {
         takeout: round2(totals.takeoutTotal),
         dineIn: round2(totals.dineInTotal),
         driveThrough: round2(totals.driveThroughTotal),
         delivery: round2(totals.deliveryTotal),
-        total: round2(totals.completedTotal)
+        total: round2(totals.completedTotal),
       },
       channelSummary: {
         online: round2(totals.onlineTotal),
         doordash: round2(totals.doordashTotal),
         skip: round2(totals.skipTotal),
         ubereats: round2(totals.ubereatsTotal),
-        pos: round2(adjustedPosTotal)
+        pos: round2(adjustedPosTotal),
       },
-      expense: rawExpenses
+      expense: rawExpenses,
     };
   } catch (error) {
     logger.error(`Order Service Error: getReportsSummary - ${error.message}`);
@@ -1498,17 +1767,15 @@ exports.getReportsSummary = async (filters = {}) => {
   }
 };
 
-
 exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
   try {
-    
     // Get cached product lookup maps
-    const { categoryMap: productCategoryMap, idMap: productIDMap } = await getProductLookups();
+    const { categoryMap: productCategoryMap, idMap: productIDMap } =
+      await getProductLookups();
 
-    
     const baseFilter = {
       status: { $ne: "cancelled" },
-      ...(branchId ? { branchId } : {})
+      ...(branchId ? { branchId } : {}),
     };
     let start, end;
     if (startDate && endDate) {
@@ -1521,7 +1788,6 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
     }
     const matchQuery = buildDateFilter(start, end, baseFilter);
 
-    
     const aggregatedItems = await Order.aggregate([
       { $match: matchQuery },
       { $project: { items: 1 } },
@@ -1530,15 +1796,14 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
         $group: {
           _id: {
             menuItemId: "$items.menuItemId",
-            name: "$items.name"
+            name: "$items.name",
           },
           quantitySold: { $sum: "$items.quantity" },
-          totalSales: { $sum: "$items.totalPrice" }
-        }
-      }
+          totalSales: { $sum: "$items.totalPrice" },
+        },
+      },
     ]);
 
-    
     const categoriesMap = {};
 
     for (const item of aggregatedItems) {
@@ -1554,7 +1819,7 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
           categoryName,
           items: [],
           subtotalSold: 0,
-          subtotalSales: 0
+          subtotalSales: 0,
         };
       }
 
@@ -1564,14 +1829,13 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
         productId: productIDMap[menuItemId] || "",
         quantitySold,
         totalSales,
-        percentageSales: 0
+        percentageSales: 0,
       });
 
       categoriesMap[categoryName].subtotalSold += quantitySold;
       categoriesMap[categoryName].subtotalSales += totalSales;
     }
 
-    
     const result = [];
     for (const catName of Object.keys(categoriesMap)) {
       const catData = categoriesMap[catName];
@@ -1579,7 +1843,9 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
 
       for (const item of catData.items) {
         if (catData.subtotalSales > 0) {
-          item.percentageSales = round2((item.totalSales / catData.subtotalSales) * 100);
+          item.percentageSales = round2(
+            (item.totalSales / catData.subtotalSales) * 100,
+          );
         } else {
           item.percentageSales = 0;
         }
@@ -1601,12 +1867,16 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
 };
 
 // Get Hourly Sales Summary Report  ───────
-exports.getHourlySalesSummary = async ({ startDate, endDate, branchId } = {}) => {
+exports.getHourlySalesSummary = async ({
+  startDate,
+  endDate,
+  branchId,
+} = {}) => {
   try {
     const TIMEZONE = "America/Edmonton";
-    const baseFilter = { 
+    const baseFilter = {
       status: { $in: ["pending", "preparing", "ready", "completed"] },
-      ...(branchId ? { branchId } : {})
+      ...(branchId ? { branchId } : {}),
     };
     let start, end;
     if (startDate && endDate) {
@@ -1619,27 +1889,42 @@ exports.getHourlySalesSummary = async ({ startDate, endDate, branchId } = {}) =>
     }
     const matchQuery = buildDateFilter(start, end, baseFilter);
 
-    // Aggregation: group by hour in local timezone 
+    // Aggregation: group by hour in local timezone
     const hourlyData = await Order.aggregate([
       { $match: matchQuery },
-      { $project: {
+      {
+        $project: {
           total: 1,
-          businessHour: { $hour: {
-            date: { $cond: [{ $eq: ["$orderTiming", "later"] }, "$scheduledAt", "$createdAt"] },
-            timezone: TIMEZONE
-          }}
-      }},
-      { $group: {
+          businessHour: {
+            $hour: {
+              date: {
+                $cond: [
+                  { $eq: ["$orderTiming", "later"] },
+                  "$scheduledAt",
+                  "$createdAt",
+                ],
+              },
+              timezone: TIMEZONE,
+            },
+          },
+        },
+      },
+      {
+        $group: {
           _id: "$businessHour",
           orderCount: { $sum: 1 },
-          totalSales: { $sum: "$total" }
-      }}
+          totalSales: { $sum: "$total" },
+        },
+      },
     ]);
 
     // Build hour lookup map from aggregation results
     const hourMap = new Map();
     for (const row of hourlyData) {
-      hourMap.set(row._id, { orderCount: row.orderCount, totalSales: row.totalSales });
+      hourMap.set(row._id, {
+        orderCount: row.orderCount,
+        totalSales: row.totalSales,
+      });
     }
 
     // Define hourly slots dynamically for all 24 hours of the day
@@ -1651,17 +1936,17 @@ exports.getHourlySalesSummary = async ({ startDate, endDate, branchId } = {}) =>
       } else if (h === 12) {
         label = "12 PM to 1 PM";
       } else if (h < 12) {
-        label = `${h} AM to ${h + 1 === 12 ? "12 PM" : (h + 1) + " AM"}`;
+        label = `${h} AM to ${h + 1 === 12 ? "12 PM" : h + 1 + " AM"}`;
       } else {
         const hr12 = h - 12;
-        label = `${hr12} PM to ${hr12 + 1 === 12 ? "12 AM" : (hr12 + 1) + " PM"}`;
+        label = `${hr12} PM to ${hr12 + 1 === 12 ? "12 AM" : hr12 + 1 + " PM"}`;
       }
       hourlySlots.push({
         label,
         startHour: h,
         endHour: (h + 1) % 24,
         orderCount: 0,
-        totalSales: 0
+        totalSales: 0,
       });
     }
 
@@ -1676,13 +1961,19 @@ exports.getHourlySalesSummary = async ({ startDate, endDate, branchId } = {}) =>
 
     return hourlySlots;
   } catch (error) {
-    logger.error(`Order Service Error: getHourlySalesSummary - ${error.message}`);
+    logger.error(
+      `Order Service Error: getHourlySalesSummary - ${error.message}`,
+    );
     throw error;
   }
 };
 
 // ── Get Monthly Sales Summary Report ───────
-exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) => {
+exports.getMonthlySalesSummary = async ({
+  startDate,
+  endDate,
+  branchId,
+} = {}) => {
   try {
     const TIMEZONE = "America/Edmonton";
     let start, end;
@@ -1705,14 +1996,25 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
     const [ordersByDayAgg, expensesRaw, depositsRaw] = await Promise.all([
       Order.aggregate([
         { $match: dateFilter },
-        { $addFields: {
-            businessDate: { $dateToString: {
-              format: "%Y-%m-%d",
-              date: { $cond: [{ $eq: ["$orderTiming", "later"] }, "$scheduledAt", "$createdAt"] },
-              timezone: TIMEZONE
-            }}
-        }},
-        { $group: {
+        {
+          $addFields: {
+            businessDate: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: {
+                  $cond: [
+                    { $eq: ["$orderTiming", "later"] },
+                    "$scheduledAt",
+                    "$createdAt",
+                  ],
+                },
+                timezone: TIMEZONE,
+              },
+            },
+          },
+        },
+        {
+          $group: {
             _id: { date: "$businessDate", status: "$status" },
             count: { $sum: 1 },
             subtotal: { $sum: "$subtotal" },
@@ -1720,42 +2022,186 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
             discount: { $sum: "$discount" },
             total: { $sum: "$total" },
             // Payment breakdowns via conditional sums
-            cashTotal: { $sum: { $cond: [
-              { $and: [{ $ne: ["$status", "cancelled"] }, { $in: ["$orderSource", ["pos"]] }] },
-              "$total", 0
-            ]}},
+            cashTotal: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$status", "cancelled"] },
+                      { $in: ["$orderSource", ["pos"]] },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
             // Order types
-            takeoutTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "takeout"] }] }, "$total", 0] } },
-            dineInTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $in: ["$orderType", ["dine-in", "dinein"]] }] }, "$total", 0] } },
-            deliveryTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderType", "delivery"] }] }, "$total", 0] } },
-            driveThroughTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $in: ["$orderType", ["drive-through", "drivethrough"]] }] }, "$total", 0] } },
+            takeoutTotal: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$status", "cancelled"] },
+                      { $eq: ["$orderType", "takeout"] },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
+            dineInTotal: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$status", "cancelled"] },
+                      { $in: ["$orderType", ["dine-in", "dinein"]] },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
+            deliveryTotal: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$status", "cancelled"] },
+                      { $eq: ["$orderType", "delivery"] },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
+            driveThroughTotal: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$status", "cancelled"] },
+                      {
+                        $in: ["$orderType", ["drive-through", "drivethrough"]],
+                      },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
             // Source breakdowns
-            onlineTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "online"] }] }, "$total", 0] } },
-            posTotal: { $sum: { $cond: [{ $and: [{ $ne: ["$status", "cancelled"] }, { $eq: ["$orderSource", "pos"] }] }, "$total", 0] } },
+            onlineTotal: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$status", "cancelled"] },
+                      { $eq: ["$orderSource", "online"] },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
+            posTotal: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ["$status", "cancelled"] },
+                      { $eq: ["$orderSource", "pos"] },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
             // Cancelled breakdowns
-            paidCancelled: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "cancelled"] }, { $eq: ["$paymentStatus", "paid"] }] }, 1, 0] } },
-            unpaidCancelled: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "cancelled"] }, { $ne: ["$paymentStatus", "paid"] }] }, 1, 0] } },
+            paidCancelled: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$status", "cancelled"] },
+                      { $eq: ["$paymentStatus", "paid"] },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+            unpaidCancelled: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$status", "cancelled"] },
+                      { $ne: ["$paymentStatus", "paid"] },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
             // Payment details — flatten payments array and aggregate
-            orders: { $push: { total: "$total", payments: "$payments", orderSource: "$orderSource", status: "$status" } }
-        }}
+            orders: {
+              $push: {
+                total: "$total",
+                payments: "$payments",
+                orderSource: "$orderSource",
+                status: "$status",
+              },
+            },
+          },
+        },
       ]),
-      Expense.find({ expenseDate: { $gte: start, $lte: end }, ...(branchId ? { branchId } : {}) }).lean(),
-      Deposit.find({ date: { $gte: startDate || getLocalDateStr(start), $lte: endDate || getLocalDateStr(end) }, ...(branchId ? { branchId } : {}) }).lean()
+      Expense.find({
+        expenseDate: { $gte: start, $lte: end },
+        ...(branchId ? { branchId } : {}),
+      }).lean(),
+      Deposit.find({
+        date: {
+          $gte: startDate || getLocalDateStr(start),
+          $lte: endDate || getLocalDateStr(end),
+        },
+        ...(branchId ? { branchId } : {}),
+      }).lean(),
     ]);
 
-    // Build date-keyed Maps 
+    // Build date-keyed Maps
     const dayDataMap = new Map(); // date -> { active: {...}, cancelled: {...} }
 
     for (const row of ordersByDayAgg) {
       const dateStr = row._id.date;
       if (!dayDataMap.has(dateStr)) {
         dayDataMap.set(dateStr, {
-          subtotal: 0, tax: 0, discount: 0, total: 0,
-          takeout: 0, dineIn: 0, delivery: 0, driveThrough: 0,
-          online: 0, pos: 0,
-          completedCount: 0, paidCancelledCount: 0, unpaidCancelledCount: 0,
-          cashSales: 0, cardSales: 0, accountPaySales: 0,
-          orders: []
+          subtotal: 0,
+          tax: 0,
+          discount: 0,
+          total: 0,
+          takeout: 0,
+          dineIn: 0,
+          delivery: 0,
+          driveThrough: 0,
+          online: 0,
+          pos: 0,
+          completedCount: 0,
+          paidCancelledCount: 0,
+          unpaidCancelledCount: 0,
+          cashSales: 0,
+          cardSales: 0,
+          accountPaySales: 0,
+          orders: [],
         });
       }
       const day = dayDataMap.get(dateStr);
@@ -1781,16 +2227,24 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
 
     // Process payment breakdowns per day from pushed orders
     for (const [, day] of dayDataMap) {
-      let cashSales = 0, cardSales = 0, accountPaySales = 0;
+      let cashSales = 0,
+        cardSales = 0,
+        accountPaySales = 0;
       for (const o of day.orders) {
         if (o.status === "cancelled") continue;
-        const orderPayments = o.payments && o.payments.length > 0
-          ? o.payments
-          : [{ method: "cash", amount: o.total || 0 }];
+        const orderPayments =
+          o.payments && o.payments.length > 0
+            ? o.payments
+            : [{ method: "cash", amount: o.total || 0 }];
         for (const p of orderPayments) {
           const method = p.method ? p.method.toLowerCase() : "cash";
           if (method === "cash") cashSales += p.amount;
-          else if (method === "credit" || method === "card" || method === "debit") cardSales += p.amount;
+          else if (
+            method === "credit" ||
+            method === "card" ||
+            method === "debit"
+          )
+            cardSales += p.amount;
           else accountPaySales += p.amount;
         }
       }
@@ -1802,7 +2256,9 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
 
     const expenseMap = new Map();
     for (const e of expensesRaw) {
-      const dateStr = e.expenseDate ? getLocalDateStr(new Date(e.expenseDate)) : null;
+      const dateStr = e.expenseDate
+        ? getLocalDateStr(new Date(e.expenseDate))
+        : null;
       if (dateStr) {
         if (!expenseMap.has(dateStr)) expenseMap.set(dateStr, []);
         expenseMap.get(dateStr).push(e);
@@ -1813,7 +2269,7 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
       depositMap.set(d.date, d);
     }
 
-    // Iterate day by day — now just Map lookups 
+    // Iterate day by day — now just Map lookups
     const result = [];
     const startDateStr = startDate || getLocalDateStr(start);
     const endDateStr = endDate || getLocalDateStr(end);
@@ -1826,14 +2282,29 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
       const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`;
 
       const day = dayDataMap.get(dateStr) || {
-        subtotal: 0, tax: 0, discount: 0, total: 0,
-        takeout: 0, dineIn: 0, delivery: 0, driveThrough: 0,
-        online: 0, pos: 0,
-        completedCount: 0, paidCancelledCount: 0, unpaidCancelledCount: 0,
-        cashSales: 0, cardSales: 0, accountPaySales: 0
+        subtotal: 0,
+        tax: 0,
+        discount: 0,
+        total: 0,
+        takeout: 0,
+        dineIn: 0,
+        delivery: 0,
+        driveThrough: 0,
+        online: 0,
+        pos: 0,
+        completedCount: 0,
+        paidCancelledCount: 0,
+        unpaidCancelledCount: 0,
+        cashSales: 0,
+        cardSales: 0,
+        accountPaySales: 0,
       };
       const dayExpenses = expenseMap.get(dateStr) || [];
-      const dayDeposit = depositMap.get(dateStr) || { cashAmount: 0, cardAmount: 0, accountPayAmount: 0 };
+      const dayDeposit = depositMap.get(dateStr) || {
+        cashAmount: 0,
+        cardAmount: 0,
+        accountPayAmount: 0,
+      };
 
       const grandTotal = day.total;
       const tips = grandTotal > 0 ? round2(grandTotal * 0.02) : 0;
@@ -1843,13 +2314,22 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
       const creditCardSales = round2(day.cardSales * 0.6);
       const finalCashSales = round2(day.cashSales);
       const finalAccountPaySales = round2(day.accountPaySales);
-      const paymentGrandTotal = round2(finalCashSales + debitCardSales + creditCardSales + finalAccountPaySales);
+      const paymentGrandTotal = round2(
+        finalCashSales +
+          debitCardSales +
+          creditCardSales +
+          finalAccountPaySales,
+      );
 
       const debitTips = round2(tips * 0.4);
       const creditTips = round2(tips * 0.6);
-      const paymentFinalAmount = round2(paymentGrandTotal + debitTips + creditTips);
+      const paymentFinalAmount = round2(
+        paymentGrandTotal + debitTips + creditTips,
+      );
 
-      const orderTypeTotal = round2(day.takeout + day.dineIn + day.delivery + day.driveThrough);
+      const orderTypeTotal = round2(
+        day.takeout + day.dineIn + day.delivery + day.driveThrough,
+      );
 
       const gst = round2(day.tax);
       const amexFinalAmount = round2(creditCardSales * 0.1);
@@ -1860,7 +2340,10 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
       const onlineTotal = round2(day.online);
       const posTotal = round2(day.pos);
 
-      const totalExpense = dayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+      const totalExpense = dayExpenses.reduce(
+        (sum, e) => sum + (e.amount || 0),
+        0,
+      );
 
       const depositCash = dayDeposit.cashAmount || 0;
       const depositCard = dayDeposit.cardAmount || 0;
@@ -1879,7 +2362,7 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
           tax: round2(day.tax),
           grandTotal: round2(grandTotal),
           tips: round2(tips),
-          finalAmount: round2(finalAmount)
+          finalAmount: round2(finalAmount),
         },
         paymentType: {
           cash: finalCashSales,
@@ -1889,33 +2372,35 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
           grandTotal: paymentGrandTotal,
           debitTips,
           creditTips,
-          finalAmount: paymentFinalAmount
+          finalAmount: paymentFinalAmount,
         },
         orderType: {
           takeout: round2(day.takeout),
           dineIn: round2(day.dineIn),
           delivery: round2(day.delivery),
           driveThrough: round2(day.driveThrough),
-          total: orderTypeTotal
+          total: orderTypeTotal,
         },
         orders: {
           completed: day.completedCount,
           paidCancelled: day.paidCancelledCount,
           unpaidCancelled: day.unpaidCancelledCount,
           refund: 0,
-          refundAmount: 0
+          refundAmount: 0,
         },
         taxBreakdown: { pst: 0, gst, hst: 0, total: gst },
         cardType: {
           amex: amexFinalAmount,
           interac: interacFinalAmount,
           mastercard: mastercardFinalAmount,
-          visa: visaFinalAmount
+          visa: visaFinalAmount,
         },
         online: {
           website: round2(day.online),
-          uber: 0, skip: 0, doordash: 0,
-          total: onlineTotal
+          uber: 0,
+          skip: 0,
+          doordash: 0,
+          total: onlineTotal,
         },
         pos: { posSales: posTotal, total: posTotal },
         expense: { amount: round2(totalExpense) },
@@ -1923,13 +2408,13 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
         deposit: {
           cash: round2(depositCash),
           card: round2(depositCard),
-          accountPay: round2(depositAccountPay)
+          accountPay: round2(depositAccountPay),
         },
         moneyToBeCollected: {
           cash: round2(depositCash),
           card: round2(depositCard),
-          accountPay: round2(depositAccountPay)
-        }
+          accountPay: round2(depositAccountPay),
+        },
       });
 
       currentDate.setDate(currentDate.getDate() + 1);
@@ -1937,8 +2422,9 @@ exports.getMonthlySalesSummary = async ({ startDate, endDate, branchId } = {}) =
 
     return result;
   } catch (error) {
-    logger.error(`Order Service Error: getMonthlySalesSummary - ${error.message}`);
+    logger.error(
+      `Order Service Error: getMonthlySalesSummary - ${error.message}`,
+    );
     throw error;
   }
 };
-

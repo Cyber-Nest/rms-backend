@@ -6,6 +6,7 @@ const attendanceController = require("../controllers/attendance.controller");
 // Employee CRUD
 router.post("/employees", employeeController.createEmployee);
 router.get("/employees", employeeController.getAllEmployees);
+router.get("/employee/employees", employeeController.getAllEmployees);
 router.get("/employees/:id", employeeController.getEmployeeById);
 router.patch("/employees/:id", employeeController.updateEmployee);
 router.delete("/employees/:id", employeeController.deleteEmployee);
