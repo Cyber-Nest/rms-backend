@@ -156,6 +156,12 @@ exports.loginBranch = async (email, password) => {
     { expiresIn: "7d" },
   );
 
+  // Prefer settings.mainSettings.latitude/longitude (set via Settings page)
+  const settingsLat = branch.settings?.mainSettings?.latitude;
+  const settingsLng = branch.settings?.mainSettings?.longitude;
+  const resolvedLat = settingsLat !== undefined && settingsLat !== null ? settingsLat : branch.lat;
+  const resolvedLng = settingsLng !== undefined && settingsLng !== null ? settingsLng : branch.lng;
+
   return {
     branch: {
       _id: branch._id,
@@ -165,8 +171,8 @@ exports.loginBranch = async (email, password) => {
       address: branch.address,
       city: branch.city,
       phone: branch.phone,
-      lat: branch.lat,
-      lng: branch.lng,
+      lat: resolvedLat,
+      lng: resolvedLng,
     },
     token,
   };
