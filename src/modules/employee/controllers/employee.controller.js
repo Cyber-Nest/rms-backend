@@ -1,10 +1,28 @@
 const employeeService = require("../services/employee.service");
 const logger = require("../../../shared/utils/logger");
+const jwt = require("jsonwebtoken");
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Helper: validate that the terminal has an active master session
+const validateTerminalSession = (req) => {
+  const token = req.cookies?.rms_branch_token;
+  if (!token) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+};
+
 
 const getBranchIdFromReq = (req) => {
   return (
     req.query.branchId ||
     req.body.branchId ||
+    req.headers["x-branch-id"] ||
+    req.headers["branchid"] ||
+    req.headers["x-branchid"] ||
     req.activeBranchId ||
     req.branch?.branchId ||
     req.branch?._id
@@ -98,8 +116,36 @@ exports.deleteEmployee = async (req, res) => {
   }
 };
 
+exports.updatePermissions = async (req, res) => {
+  try {
+    const branchId = getBranchIdFromReq(req);
+    const { permissions } = req.body;
+    const updated = await employeeService.updatePermissions(branchId, req.params.id, permissions);
+    res.status(200).json({
+      success: true,
+      message: "Permissions updated successfully",
+      data: updated,
+    });
+  } catch (error) {
+    logger.error(`Error updating permissions: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 exports.verifyPin = async (req, res) => {
   try {
+    // ── Terminal session guard ──
+    const terminalSession = validateTerminalSession(req);
+    if (!terminalSession) {
+      return res.status(401).json({
+        success: false,
+        message: "No active terminal session. Ask manager to do Master Login first.",
+      });
+    }
+
     const branchId = getBranchIdFromReq(req);
     const { employeeId, pin } = req.body;
     const result = await employeeService.verifyEmployeePin(branchId, employeeId, pin);
@@ -110,6 +156,34 @@ exports.verifyPin = async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error verifying employee PIN: ${error.message}`);
+    res.status(401).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.loginAsCode = async (req, res) => {
+  try {
+    // ── Terminal session guard ──
+    const terminalSession = validateTerminalSession(req);
+    if (!terminalSession) {
+      return res.status(401).json({
+        success: false,
+        message: "No active terminal session. Ask manager to do Master Login first.",
+      });
+    }
+
+    const branchId = getBranchIdFromReq(req);
+    const { employeeId, pin } = req.body;
+    const result = await employeeService.loginAsCode(branchId, employeeId, pin);
+    res.status(200).json({
+      success: true,
+      message: "Terminal logged in successfully",
+      data: result,
+    });
+  } catch (error) {
+    logger.error(`Error in loginAsCode: ${error.message}`);
     res.status(401).json({
       success: false,
       message: error.message,

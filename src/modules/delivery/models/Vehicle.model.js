@@ -29,6 +29,8 @@ const vehicleSchema = new mongoose.Schema(
   },
 );
 
-vehicleSchema.index({ restaurantId: 1 });
+vehicleSchema.index({ restaurantId: 1, number: 1 }, { unique: true });
+vehicleSchema.index({ restaurantId: 1, isAssigned: 1 });
 
 module.exports = mongoose.model("Vehicle", vehicleSchema);
+

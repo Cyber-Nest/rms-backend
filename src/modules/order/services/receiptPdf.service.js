@@ -315,6 +315,21 @@ exports.generateReceiptPdf = async (order, res) => {
       doc.moveDown(0.4);
     }
 
+    const tip = order.tip || 0;
+    if (tip > 0) {
+      rowY = doc.y;
+      doc
+        .font("Helvetica")
+        .text("Tip :", startX, rowY, { width: 100 });
+      doc
+        .font("Helvetica-Bold")
+        .text(`$${tip.toFixed(2)}`, startX + 100, rowY, {
+          width: 106,
+          align: "right",
+        });
+      doc.moveDown(0.4);
+    }
+
     rowY = doc.y;
     doc
       .font("Helvetica-Bold")

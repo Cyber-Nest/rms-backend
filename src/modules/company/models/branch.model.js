@@ -68,6 +68,7 @@ const branchSchema = new mongoose.Schema(
         longitude: { type: Number, default: -113.37832 },
         commission: { type: Number, default: 0 },
         gstNumber: { type: String, default: '123456789' },
+        isEmergencyClosed: { type: Boolean, default: false },
       },
       taxFeesSettings: {
         deliveryFee: { type: Number, default: 4.99 },

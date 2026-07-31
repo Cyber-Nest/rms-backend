@@ -5,6 +5,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const chalk = require("chalk");
+const cookieParser = require("cookie-parser");
 
 const connectDB = require("./config/db");
 const logger = require("./shared/utils/logger");
@@ -28,6 +29,7 @@ app.use(async (req, res, next) => {
 });
 
 app.use(helmet());
+app.use(cookieParser()); 
 
 
 const allowedOrigins = [

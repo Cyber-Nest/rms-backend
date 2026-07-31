@@ -11,14 +11,14 @@ const getTodayDateStr = () => {
   return `${year}-${month}-${day}`;
 };
 
-// Generate next Employee ID for a branch: EMP-001, EMP-002, etc.
+// Generate next Employee ID for a branch: 001, 002, 003, etc.
 const generateNextEmployeeId = async (branchId) => {
   const employees = await Employee.find({ branchId }).select("employeeId").lean();
   let maxSeq = 0;
   
   employees.forEach((emp) => {
-    if (emp.employeeId && emp.employeeId.startsWith("EMP-")) {
-      const seqStr = emp.employeeId.replace("EMP-", "");
+    if (emp.employeeId) {
+      const seqStr = String(emp.employeeId).replace(/^EMP-?/i, "").trim();
       const seq = parseInt(seqStr, 10);
       if (!isNaN(seq) && seq > maxSeq) {
         maxSeq = seq;
@@ -27,7 +27,7 @@ const generateNextEmployeeId = async (branchId) => {
   });
 
   const nextSeq = maxSeq + 1;
-  return `EMP-${String(nextSeq).padStart(3, "0")}`;
+  return String(nextSeq).padStart(3, "0");
 };
 
 exports.createEmployee = async (branchId, employeeData) => {
@@ -98,6 +98,9 @@ exports.createEmployee = async (branchId, employeeData) => {
     role,
     pin: cleanPin, // Pre-save hook will hash this
     driverRef,
+    ...(employeeData.permissions && typeof employeeData.permissions === "object"
+      ? { permissions: employeeData.permissions }
+      : {}),
   });
 
   await employee.save();
@@ -190,6 +193,9 @@ exports.updateEmployee = async (branchId, id, updateData) => {
 
   if (updateData.address !== undefined) employee.address = updateData.address.trim();
   if (updateData.isActive !== undefined) employee.isActive = Boolean(updateData.isActive);
+  if (updateData.permissions && typeof updateData.permissions === "object") {
+    employee.permissions = { ...employee.permissions, ...updateData.permissions };
+  }
 
   if (updateData.pin !== undefined && updateData.pin !== "") {
     const cleanPin = String(updateData.pin).trim();
@@ -255,6 +261,42 @@ exports.deleteEmployee = async (branchId, id) => {
   return { message: "Employee deactivated successfully" };
 };
 
+const VALID_PERMISSION_KEYS = [
+  // Separate route pages
+  "pos", "kitchen", "reception_view", "delivery", "driver_drop",
+  "vehicles", "customers", "employees", "menus", "setting",
+  // /employee/orders sub-tabs
+  "dashboard", "orders", "sales_summary", "expense_payout", "reports",
+  "item_sales", "hourly_sales", "cash_out_summary",
+  "monthly_sales_summary", "failed_transaction", "refund_orders",
+];
+
+exports.updatePermissions = async (branchId, id, permissions) => {
+  if (!branchId) throw new Error("Branch ID is required");
+  if (!permissions || typeof permissions !== "object") {
+    throw new Error("Permissions object is required");
+  }
+
+  const employee = await Employee.findOne({ _id: id, branchId });
+  if (!employee) throw new Error("Employee not found");
+
+  // Build $set payload — only accept known keys
+  const $set = {};
+  for (const key of VALID_PERMISSION_KEYS) {
+    if (key in permissions) {
+      $set[`permissions.${key}`] = Boolean(permissions[key]);
+    }
+  }
+
+  const updated = await Employee.findByIdAndUpdate(
+    id,
+    { $set },
+    { new: true }
+  ).select("-pin").lean();
+
+  return updated;
+};
+
 exports.verifyEmployeePin = async (branchId, employeeId, pin) => {
   if (!branchId || !employeeId || !pin) {
     throw new Error("Branch ID, Employee ID, and PIN are required");
@@ -309,5 +351,42 @@ exports.verifyEmployeePin = async (branchId, employeeId, pin) => {
       activeShift,
       allShifts: attendance ? attendance.shifts : [],
     },
+  };
+};
+
+exports.loginAsCode = async (branchId, employeeId, pin) => {
+  if (!branchId || !employeeId || !pin) {
+    throw new Error("Branch ID, Employee ID, and PIN are required");
+  }
+
+  const cleanPin = String(pin).trim();
+  if (!/^\d{4}$/.test(cleanPin)) {
+    throw new Error("PIN must be exactly 4 digits");
+  }
+
+  const employee = await Employee.findOne({
+    branchId,
+    employeeId: employeeId.trim().toUpperCase(),
+    isActive: true,
+  });
+
+  if (!employee) {
+    throw new Error("Employee not found or inactive");
+  }
+
+  if (employee.role === "driver") {
+    throw new Error("Driver accounts cannot log in to POS terminal.");
+  }
+
+  const isMatch = await employee.comparePin(cleanPin);
+  if (!isMatch) {
+    throw new Error("Invalid 4-digit PIN");
+  }
+
+  const empObj = employee.toObject();
+  delete empObj.pin;
+
+  return {
+    employee: empObj,
   };
 };

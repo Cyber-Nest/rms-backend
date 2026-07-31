@@ -167,9 +167,15 @@ exports.downloadReceiptPdf = async (req, res) => {
 
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const { status, note, receptionCompleted } = req.body;
+    const { status, note, receptionCompleted, userName, employeeName } = req.body;
     if (!status) return res.status(400).json({ success: false, message: 'Status is required.' });
-    const order = await orderService.updateOrderStatus(req.params.id, status, note, receptionCompleted);
+    const order = await orderService.updateOrderStatus(
+      req.params.id,
+      status,
+      note,
+      receptionCompleted,
+      userName || employeeName || 'Manager'
+    );
     res.status(200).json({
       success: true,
       data: {
@@ -186,7 +192,8 @@ exports.updateOrderStatus = async (req, res) => {
 
 exports.kitchenClear = async (req, res) => {
   try {
-    const order = await orderService.kitchenClear(req.params.id);
+    const { userName, employeeName } = req.body || {};
+    const order = await orderService.kitchenClear(req.params.id, userName || employeeName || 'Manager');
     res.status(200).json({
       success: true,
       data: {

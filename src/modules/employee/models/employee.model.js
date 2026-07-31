@@ -36,7 +36,7 @@ const employeeSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["manager", "driver", "cashier", "chef", "crew-member"],
+      enum: ["manager", "supervisor", "driver", "cashier", "chef", "crew-member"],
       required: [true, "Role is required"],
     },
     pin: {
@@ -51,6 +51,30 @@ const employeeSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Driver",
       default: null,
+    },
+    permissions: {
+      pos:                    { type: Boolean, default: true  }, // always-on default
+      kitchen:                { type: Boolean, default: false },
+      reception_view:         { type: Boolean, default: false },
+      delivery:               { type: Boolean, default: false },
+      driver_drop:            { type: Boolean, default: false },
+      vehicles:               { type: Boolean, default: false },
+      customers:              { type: Boolean, default: false },
+      employees:              { type: Boolean, default: false },
+      menus:                  { type: Boolean, default: false },
+      setting:                { type: Boolean, default: false },
+      //orders sub-tabs
+      dashboard:              { type: Boolean, default: false },
+      orders:                 { type: Boolean, default: false },
+      sales_summary:          { type: Boolean, default: false },
+      expense_payout:         { type: Boolean, default: false },
+      reports:                { type: Boolean, default: false },
+      item_sales:             { type: Boolean, default: false },
+      hourly_sales:           { type: Boolean, default: false },
+      cash_out_summary:       { type: Boolean, default: false },
+      monthly_sales_summary:  { type: Boolean, default: false },
+      failed_transaction:     { type: Boolean, default: false },
+      refund_orders:          { type: Boolean, default: false },
     },
   },
   {
