@@ -30,6 +30,10 @@ const driverSchema = new mongoose.Schema(
       enum: ["available", "on-delivery", "returning", "offline"],
       default: "offline",
     },
+    isDutyOnline: {
+      type: Boolean,
+      default: false,
+    },
     assignedVehicleId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Vehicle",
