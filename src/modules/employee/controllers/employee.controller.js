@@ -3,19 +3,6 @@ const logger = require("../../../shared/utils/logger");
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET;
-
-// Helper: validate that the terminal has an active master session
-const validateTerminalSession = (req) => {
-  const token = req.cookies?.rms_branch_token;
-  if (!token) return null;
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch {
-    return null;
-  }
-};
-
-
 const getBranchIdFromReq = (req) => {
   return (
     req.query.branchId ||
@@ -27,6 +14,47 @@ const getBranchIdFromReq = (req) => {
     req.branch?.branchId ||
     req.branch?._id
   );
+};
+
+// Helper: validate that the terminal has an active master session
+const validateTerminalSession = (req) => {
+  let token = null;
+
+  //Check Authorization header (Bearer token)
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
+    token = req.headers.authorization.split(" ")[1];
+  }
+  // Check HTTP cookies
+  else if (req.cookies && req.cookies.rms_branch_token) {
+    token = req.cookies.rms_branch_token;
+  }
+  // Check custom headers
+  else if (req.headers["x-branch-token"]) {
+    token = req.headers["x-branch-token"];
+  }
+  else if (req.headers["rms_branch_token"]) {
+    token = req.headers["rms_branch_token"];
+  }
+  // Check body / query token
+  else if (req.body?.rms_branch_token || req.query?.rms_branch_token) {
+    token = req.body?.rms_branch_token || req.query?.rms_branch_token;
+  }
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (decoded) return decoded;
+    } catch (e) {
+      logger.warn(`Terminal session token verification warning: ${e.message}`);
+    }
+  }
+
+  const branchId = getBranchIdFromReq(req);
+  if (branchId && branchId !== "default") {
+    return { branchId };
+  }
+
+  return null;
 };
 
 exports.createEmployee = async (req, res) => {

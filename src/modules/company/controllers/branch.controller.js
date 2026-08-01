@@ -115,7 +115,7 @@ exports.loginBranch = async (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      sameSite: "lax",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     });
 
     res.status(200).json({
@@ -136,7 +136,11 @@ exports.loginBranch = async (req, res) => {
 };
 
 exports.logoutBranch = async (req, res) => {
-  res.clearCookie("rms_branch_token", { httpOnly: true, sameSite: "lax" });
+  res.clearCookie("rms_branch_token", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
   res.status(200).json({
     success: true,
     message: "Branch logged out successfully",
