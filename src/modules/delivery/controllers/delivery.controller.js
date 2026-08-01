@@ -207,7 +207,7 @@ exports.getDrivers = async (req, res) => {
     const restaurantId = getRestaurantIdFromReq(req);
     const drivers = await Driver.find({ restaurantId })
       .select(
-        "_id driverId name phone status color activeOrderIds currentLocation assignedVehicleId",
+        "_id driverId name phone status isDutyOnline color activeOrderIds currentLocation assignedVehicleId",
       )
       .populate(
         "assignedVehicleId",
@@ -260,12 +260,20 @@ exports.getDrivers = async (req, res) => {
         driverCheckedInMap.get(String(driver.driverId).toUpperCase()) ||
         false;
 
+      const isBusy = driver.status === "on-delivery" || driver.status === "returning";
+      const computedStatus = isBusy
+        ? driver.status
+        : Boolean(driver.isDutyOnline)
+        ? "available"
+        : "offline";
+
       return {
         _id: driver._id,
         driverId: driver.driverId,
         name: driver.name,
         phone: driver.phone,
-        status: driver.status,
+        status: computedStatus,
+        isDutyOnline: Boolean(driver.isDutyOnline),
         color: driver.color,
         activeOrders: driver.activeOrderIds || [],
         currentLocation: { lat: null, lng: null },
@@ -797,7 +805,7 @@ exports.driverLogin = async (req, res) => {
       status: { $in: ["assigned", "en-route", "delivered"] },
     }).lean();
 
-    let recoveredStatus = "available";
+    let recoveredStatus = driver.isDutyOnline ? "available" : "offline";
     let activeOrderIds = [];
 
     if (activeAssignments.length > 0) {
@@ -975,16 +983,16 @@ exports.markCompleted = async (req, res) => {
     assignment.completedAt = new Date();
     await assignment.save();
 
-    // Set driver to available
+    // Set driver to available if online, else offline
     const driver = await Driver.findById(assignment.driverId);
     if (driver) {
-      driver.status = "available";
+      driver.status = driver.isDutyOnline ? "available" : "offline";
       driver.activeOrderIds = [];
       await driver.save();
 
       await triggerDriverStatusChange(driver.restaurantId, {
         driverId: driver._id.toString(),
-        status: "available",
+        status: driver.status,
       });
     }
 
@@ -1024,7 +1032,7 @@ exports.updateDriverStatus = async (req, res) => {
 
     const driver = await Driver.findByIdAndUpdate(
       id,
-      { status },
+      { status, isDutyOnline: status === "available" },
       { new: true },
     ).lean();
 
@@ -1216,7 +1224,7 @@ exports.unassignDriver = async (req, res) => {
         (oid) => oid.toString() !== orderId.toString(),
       );
       if (driver.activeOrderIds.length === 0) {
-        driver.status = "available";
+        driver.status = driver.isDutyOnline ? "available" : "offline";
       }
       await driver.save();
 
