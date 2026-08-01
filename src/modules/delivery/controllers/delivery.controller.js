@@ -714,6 +714,21 @@ exports.driverLogin = async (req, res) => {
       });
     }
 
+    //ONLY DRIVERS CAN LOGIN TO DRIVER 
+    const isDriverRole =
+      employee?.role === "driver" ||
+      Boolean(employee?.driverRef) ||
+      Boolean(driver);
+
+    if (!isDriverRole) {
+      return res.status(403).json({
+        success: false,
+        code: "NOT_A_DRIVER",
+        message:
+          "Access denied. Only employees registered as Drivers can log in to Driver App.",
+      });
+    }
+
     // Verify password / PIN
     let isPasswordValid = false;
     if (driver && driver.password === cleanPin) {
