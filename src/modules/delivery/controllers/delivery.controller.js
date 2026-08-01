@@ -221,7 +221,7 @@ exports.getDrivers = async (req, res) => {
     // Get all driver-role employees for this branch
     const employees = await Employee.find({
       branchId: restaurantId,
-      role: "driver",
+      $or: [{ role: "driver" }, { driverRef: { $exists: true, $ne: null } }],
       isActive: true,
     })
       .select("_id employeeId driverRef")
@@ -244,18 +244,21 @@ exports.getDrivers = async (req, res) => {
 
     const driverCheckedInMap = new Map();
     employees.forEach((emp) => {
+      const isCheckedIn = checkedInEmpIds.has(emp._id.toString());
       if (emp.driverRef) {
-        driverCheckedInMap.set(
-          emp.driverRef.toString(),
-          checkedInEmpIds.has(emp._id.toString()),
-        );
+        driverCheckedInMap.set(emp.driverRef.toString(), isCheckedIn);
+      }
+      if (emp.employeeId) {
+        driverCheckedInMap.set(String(emp.employeeId).toUpperCase(), isCheckedIn);
       }
     });
 
     const enriched = drivers.map((driver) => {
       const assignedVehicle = driver.assignedVehicleId;
       const posCheckedIn =
-        driverCheckedInMap.get(driver._id.toString()) || false;
+        driverCheckedInMap.get(driver._id.toString()) ||
+        driverCheckedInMap.get(String(driver.driverId).toUpperCase()) ||
+        false;
 
       return {
         _id: driver._id,
