@@ -14,6 +14,13 @@ const protectBranch = (req, res, next) => {
     else if (req.cookies && req.cookies.rms_branch_token) {
       token = req.cookies.rms_branch_token;
     }
+    // Check custom headers
+    else if (req.headers["x-branch-token"]) {
+      token = req.headers["x-branch-token"];
+    }
+    else if (req.headers["rms_branch_token"]) {
+      token = req.headers["rms_branch_token"];
+    }
 
     if (!token) {
       return res.status(401).json({
