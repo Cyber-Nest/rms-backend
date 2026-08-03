@@ -805,7 +805,7 @@ exports.driverLogin = async (req, res) => {
       status: { $in: ["assigned", "en-route", "delivered"] },
     }).lean();
 
-    let recoveredStatus = driver.isDutyOnline ? "available" : "offline";
+    let recoveredStatus = "available";
     let activeOrderIds = [];
 
     if (activeAssignments.length > 0) {
@@ -818,6 +818,7 @@ exports.driverLogin = async (req, res) => {
 
     await Driver.findByIdAndUpdate(driver._id, {
       status: recoveredStatus,
+      isDutyOnline: true,
       activeOrderIds,
     });
 

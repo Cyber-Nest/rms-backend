@@ -201,6 +201,7 @@ exports.checkOut = async (branchId, employeeId) => {
 
         // Set driver offline, unassign vehicle, clear active orders
         driverDoc.status = "offline";
+        driverDoc.isDutyOnline = false;
         driverDoc.assignedVehicleId = null;
         driverDoc.activeOrderIds = [];
         await driverDoc.save();
@@ -209,6 +210,8 @@ exports.checkOut = async (branchId, employeeId) => {
           await triggerDriverStatusChange(String(branchId), {
             driverId: driverDoc._id.toString(),
             status: "offline",
+            posCheckedIn: false,
+            checkedOut: true,
           });
         } catch (pe) {}
       }
