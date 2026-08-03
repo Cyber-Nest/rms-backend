@@ -2,37 +2,38 @@ const express = require('express');
 const router = express.Router();
 const menuController = require('../controllers/menu.controller');
 const { uploadSingleImage } = require('../../../shared/utils/multer');
+const protectSuperAdmin = require('../../../shared/middleware/protectSuperAdmin');
 
-// Image Upload with size limit 
-router.post('/upload', uploadSingleImage('image'), menuController.uploadImage);
+// Image Upload with size limit (Super Admin)
+router.post('/upload', protectSuperAdmin, uploadSingleImage('image'), menuController.uploadImage);
 
-// Delete Image from Cloudinary
-router.post('/upload/delete', menuController.deleteImage);
+// Delete Image from Cloudinary (Super Admin)
+router.post('/upload/delete', protectSuperAdmin, menuController.deleteImage);
 
-// POS Combined feed
+// Public POS & Customer feed
 router.get('/pos-feed', menuController.getPOSMenu);
 
 // Category Routes
 router.get('/categories', menuController.getCategories);
-router.post('/categories', menuController.createCategory);
-router.put('/categories/:id', menuController.updateCategory);
-router.delete('/categories/:id', menuController.deleteCategory);
+router.post('/categories', protectSuperAdmin, menuController.createCategory);
+router.put('/categories/:id', protectSuperAdmin, menuController.updateCategory);
+router.delete('/categories/:id', protectSuperAdmin, menuController.deleteCategory);
 
 // Modifier Group Routes
 router.get('/modifiers', menuController.getModifierGroups);
-router.post('/modifiers', menuController.createModifierGroup);
-router.put('/modifiers/:id', menuController.updateModifierGroup);
-router.delete('/modifiers/:id', menuController.deleteModifierGroup);
+router.post('/modifiers', protectSuperAdmin, menuController.createModifierGroup);
+router.put('/modifiers/:id', protectSuperAdmin, menuController.updateModifierGroup);
+router.delete('/modifiers/:id', protectSuperAdmin, menuController.deleteModifierGroup);
 
 // Product Routes
 router.get('/products/branch-list', menuController.getBranchProductsList);
-router.patch('/products/:id/toggle-active', menuController.toggleProductActive);
-router.patch('/products/:id/toggle-stock', menuController.toggleProductStock);
-router.patch('/products/:id/toggle-branch', menuController.toggleProductBranch);
-router.patch('/categories/:id/toggle-branch', menuController.toggleCategoryBranch);
+router.patch('/products/:id/toggle-active', protectSuperAdmin, menuController.toggleProductActive);
+router.patch('/products/:id/toggle-stock', protectSuperAdmin, menuController.toggleProductStock);
+router.patch('/products/:id/toggle-branch', protectSuperAdmin, menuController.toggleProductBranch);
+router.patch('/categories/:id/toggle-branch', protectSuperAdmin, menuController.toggleCategoryBranch);
 router.get('/products', menuController.getProducts);
-router.post('/products', menuController.createProduct);
-router.put('/products/:id', menuController.updateProduct);
-router.delete('/products/:id', menuController.deleteProduct);
+router.post('/products', protectSuperAdmin, menuController.createProduct);
+router.put('/products/:id', protectSuperAdmin, menuController.updateProduct);
+router.delete('/products/:id', protectSuperAdmin, menuController.deleteProduct);
 
 module.exports = router;

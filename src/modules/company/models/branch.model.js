@@ -53,6 +53,17 @@ const branchSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
+    },
+    isLive: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    isLocationConfigured: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
     qrCodePayload: {
       type: String,
@@ -64,8 +75,8 @@ const branchSchema = new mongoose.Schema(
         defaultTimeMinutes: { type: Number, default: 15 },
         reportingStartTime: { type: String, default: '12:00 AM' },
         reportingEndTime: { type: String, default: '12:00 AM' },
-        latitude: { type: Number, default: 51.05643 },
-        longitude: { type: Number, default: -113.37832 },
+        latitude: { type: Number, default: null },
+        longitude: { type: Number, default: null },
         commission: { type: Number, default: 0 },
         gstNumber: { type: String, default: '123456789' },
         isEmergencyClosed: { type: Boolean, default: false },
@@ -122,9 +133,23 @@ const branchSchema = new mongoose.Schema(
 
 branchSchema.index({ code: 1 }, { unique: true });
 branchSchema.index({ email: 1 }, { unique: true });
+branchSchema.index({ isActive: 1, isLive: 1 });
+branchSchema.index({ lat: 1, lng: 1 });
 
-// Hash password and ensure QR payload before saving
+// Hash password, compute location flag, and ensure QR payload before saving
 branchSchema.pre("save", async function () {
+  if (
+    this.lat !== null &&
+    this.lng !== null &&
+    this.lat !== undefined &&
+    this.lng !== undefined &&
+    !(this.lat === 0 && this.lng === 0)
+  ) {
+    this.isLocationConfigured = true;
+  } else {
+    this.isLocationConfigured = false;
+  }
+
   if (!this.qrCodePayload) {
     this.qrCodePayload = JSON.stringify({
       type: "BRANCH_PAIRING_QR",

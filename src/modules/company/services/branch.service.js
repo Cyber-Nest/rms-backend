@@ -1,7 +1,159 @@
 const Branch = require("../models/branch.model");
+const SuperAdmin = require("../models/superAdmin.model");
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "rms_super_secret_jwt_key";
+
+// Super Admin Login
+exports.loginSuperAdmin = async ({ email, password }) => {
+  if (!email || !password) {
+    throw new Error("Email and password are required");
+  }
+
+  const admin = await SuperAdmin.findOne({ email: email.toLowerCase() }).select(
+    "+password",
+  );
+  if (!admin) {
+    throw new Error("Invalid Super Admin credentials");
+  }
+
+  const isMatch = await admin.comparePassword(password);
+  if (!isMatch) {
+    throw new Error("Invalid Super Admin credentials");
+  }
+
+  admin.lastLoginAt = new Date();
+  await admin.save();
+
+  const token = jwt.sign(
+    {
+      id: admin._id,
+      email: admin.email,
+      name: admin.name,
+      role: "super_admin",
+    },
+    JWT_SECRET,
+    { expiresIn: "24h" },
+  );
+
+  return {
+    admin: {
+      id: admin._id,
+      name: admin.name,
+      email: admin.email,
+      role: admin.role,
+    },
+    token,
+  };
+};
+
+exports.getSuperAdminMe = async (adminId) => {
+  const admin = await SuperAdmin.findById(adminId).lean();
+  if (!admin) {
+    throw new Error("Super Admin account not found");
+  }
+  return {
+    id: admin._id,
+    _id: admin._id,
+    name: admin.name,
+    email: admin.email,
+    role: admin.role,
+  };
+};
+
+//Generate short-lived (2-Minute) Single-Use Impersonation Ticket
+exports.createBranchImpersonationToken = async (branchId, superAdminUser) => {
+  const branch = await Branch.findById(branchId).lean();
+  if (!branch) {
+    throw new Error("Branch not found");
+  }
+  if (!branch.isActive) {
+    throw new Error("Cannot impersonate an inactive branch.");
+  }
+
+  // 2 Minute single-use ticket
+  const ticketPayload = {
+    branchId: String(branch._id),
+    branchCode: branch.code,
+    branchName: branch.name,
+    superAdminId: superAdminUser.id,
+    superAdminEmail: superAdminUser.email,
+    purpose: "super_admin_impersonation",
+    type: "IMPERSONATION_TICKET",
+  };
+
+  const ticket = jwt.sign(ticketPayload, JWT_SECRET, { expiresIn: "2m" });
+
+  return {
+    ticket,
+    branchId: String(branch._id),
+    branchName: branch.name,
+    branchCode: branch.code,
+    expiresInSeconds: 120,
+  };
+};
+
+//Consume ticket and grant active working Branch Admin session
+exports.consumeImpersonationToken = async (ticket) => {
+  if (!ticket) {
+    throw new Error("Impersonation ticket is required");
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(ticket, JWT_SECRET);
+  } catch (err) {
+    throw new Error(
+      "Impersonation ticket has expired or is invalid. Please launch from Super Admin panel again.",
+    );
+  }
+
+  if (decoded.purpose !== "super_admin_impersonation" || !decoded.branchId) {
+    throw new Error("Invalid impersonation ticket format");
+  }
+
+  const branch = await Branch.findById(decoded.branchId).lean();
+  if (!branch) {
+    throw new Error("Target branch no longer exists");
+  }
+  if (!branch.isActive) {
+    throw new Error("Target branch is inactive");
+  }
+
+  // Generate full-duration Branch Session token with Super Admin flag
+  const sessionToken = jwt.sign(
+    {
+      branchId: branch._id,
+      code: branch.code,
+      name: branch.name,
+      email: branch.email,
+      role: "branch",
+      isSuperAdminSession: true,
+      superAdminEmail: decoded.superAdminEmail,
+    },
+    JWT_SECRET,
+    { expiresIn: "24h" },
+  );
+
+  return {
+    branch: {
+      _id: branch._id,
+      id: branch._id,
+      name: branch.name,
+      code: branch.code,
+      email: branch.email,
+      isLive: branch.isLive,
+      isActive: branch.isActive,
+      isLocationConfigured: branch.isLocationConfigured,
+      lat: branch.lat,
+      lng: branch.lng,
+      isSuperAdminSession: true,
+      superAdminEmail: decoded.superAdminEmail,
+      token: sessionToken,
+    },
+    token: sessionToken,
+  };
+};
 
 exports.createBranch = async (branchData) => {
   const existingCode = await Branch.findOne({
@@ -58,14 +210,17 @@ exports.getAllBranches = async (query = {}) => {
   if (query.isActive !== undefined) {
     filter.isActive = query.isActive === "true" || query.isActive === true;
   }
-  return await Branch.find(filter).sort({ createdAt: -1 });
+  if (query.isLive !== undefined) {
+    filter.isLive = query.isLive === "true" || query.isLive === true;
+  }
+  return await Branch.find(filter).sort({ createdAt: -1 }).lean();
 };
 
 exports.getPublicBranches = async () => {
   await exports.ensureBranchQrCodes();
-  return await Branch.find({ isActive: true })
+  return await Branch.find({ isActive: true, isLive: true })
     .select(
-      "name code address phone email isActive settings.mainSettings.isEmergencyClosed settings.storeTimings settings.taxFeesSettings",
+      "name code address city phone email lat lng isActive isLive isLocationConfigured settings.mainSettings.isEmergencyClosed settings.storeTimings settings.taxFeesSettings",
     )
     .sort({ name: 1 })
     .lean();
@@ -111,10 +266,44 @@ exports.updateBranch = async (id, updateData) => {
     }
   }
 
-  // If updating password, fetch branch & let pre-save hook hash it
+  // Fetch target branch
   let branch = await Branch.findById(id);
   if (!branch) {
     throw new Error("Branch not found");
+  }
+
+  // If branch is deactivated (isActive = false), automatically set isLive = false
+  if (updateData.isActive === false) {
+    updateData.isLive = false;
+  }
+
+  // Go Live Validation Guard
+  if (updateData.isLive === true) {
+    const effectiveIsActive =
+      updateData.isActive !== undefined ? updateData.isActive : branch.isActive;
+    if (!effectiveIsActive) {
+      throw new Error(
+        "Cannot Go Live: Inactive branches cannot be published Live. Please activate the branch first.",
+      );
+    }
+
+    const effectiveLat =
+      updateData.lat !== undefined ? updateData.lat : branch.lat;
+    const effectiveLng =
+      updateData.lng !== undefined ? updateData.lng : branch.lng;
+    const hasValidCoordinates =
+      effectiveLat !== null &&
+      effectiveLng !== null &&
+      effectiveLat !== undefined &&
+      effectiveLng !== undefined &&
+      !(effectiveLat === 0 && effectiveLng === 0);
+
+    if (!hasValidCoordinates && !branch.isLocationConfigured) {
+      throw new Error(
+        "Cannot Go Live: Restaurant exact location (GPS coordinates) must be configured in POS settings first.",
+      );
+    }
+    updateData.isLive = true;
   }
 
   Object.assign(branch, updateData);
@@ -153,14 +342,19 @@ exports.loginBranch = async (email, password) => {
       role: "branch",
     },
     JWT_SECRET,
-    { expiresIn: "7d" },
+    { expiresIn: "30d" },
   );
 
-  // Prefer settings.mainSettings.latitude/longitude (set via Settings page)
   const settingsLat = branch.settings?.mainSettings?.latitude;
   const settingsLng = branch.settings?.mainSettings?.longitude;
-  const resolvedLat = settingsLat !== undefined && settingsLat !== null ? settingsLat : branch.lat;
-  const resolvedLng = settingsLng !== undefined && settingsLng !== null ? settingsLng : branch.lng;
+  const resolvedLat =
+    settingsLat !== undefined && settingsLat !== null
+      ? settingsLat
+      : branch.lat;
+  const resolvedLng =
+    settingsLng !== undefined && settingsLng !== null
+      ? settingsLng
+      : branch.lng;
 
   return {
     branch: {
@@ -168,11 +362,15 @@ exports.loginBranch = async (email, password) => {
       name: branch.name,
       code: branch.code,
       email: branch.email,
-      address: branch.address,
-      city: branch.city,
-      phone: branch.phone,
       lat: resolvedLat,
       lng: resolvedLng,
+      isActive: branch.isActive,
+      isLive: branch.isLive,
+      isLocationConfigured:
+        branch.isLocationConfigured ||
+        (resolvedLat !== null &&
+          resolvedLng !== null &&
+          !(resolvedLat === 0 && resolvedLng === 0)),
     },
     token,
   };
@@ -223,6 +421,16 @@ exports.updateBranchSettings = async (branchId, settingsData) => {
     if (ms.longitude !== undefined) ms.longitude = Number(ms.longitude) || 0;
     if (ms.commission !== undefined) ms.commission = Number(ms.commission) || 0;
     $set["settings.mainSettings"] = ms;
+
+    if (
+      ms.latitude &&
+      ms.longitude &&
+      !(ms.latitude === 0 && ms.longitude === 0)
+    ) {
+      $set["lat"] = ms.latitude;
+      $set["lng"] = ms.longitude;
+      $set["isLocationConfigured"] = true;
+    }
   }
   if (settingsData.taxFeesSettings) {
     const tf = settingsData.taxFeesSettings;
@@ -257,4 +465,52 @@ exports.updateBranchSettings = async (branchId, settingsData) => {
 
   if (!updated) throw new Error("Branch not found");
   return updated.settings || {};
+};
+
+// Update Super Admin Profile
+exports.updateSuperAdminProfile = async ({ adminId, name }) => {
+  if (!name || !name.trim()) {
+    throw new Error("Name is required");
+  }
+
+  const admin = await SuperAdmin.findById(adminId);
+  if (!admin) {
+    throw new Error("Super Admin account not found");
+  }
+
+  admin.name = name.trim();
+  await admin.save();
+
+  return {
+    id: admin._id,
+    name: admin.name,
+    email: admin.email,
+    role: admin.role,
+  };
+};
+
+// Update Super Admin Password
+exports.updateSuperAdminPassword = async ({ adminId, currentPassword, newPassword }) => {
+  if (!currentPassword || !newPassword) {
+    throw new Error("Current password and new password are required");
+  }
+
+  if (newPassword.length < 6) {
+    throw new Error("New password must be at least 6 characters long");
+  }
+
+  const admin = await SuperAdmin.findById(adminId).select("+password");
+  if (!admin) {
+    throw new Error("Super Admin account not found");
+  }
+
+  const isMatch = await admin.comparePassword(currentPassword);
+  if (!isMatch) {
+    throw new Error("Incorrect current password");
+  }
+
+  admin.password = newPassword;
+  await admin.save();
+
+  return { message: "Password updated successfully" };
 };

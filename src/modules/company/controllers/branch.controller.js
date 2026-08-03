@@ -1,6 +1,146 @@
 const branchService = require("../services/branch.service");
 const logger = require("../../../shared/utils/logger");
 
+exports.loginSuperAdmin = async (req, res) => {
+  try {
+    const { admin, token } = await branchService.loginSuperAdmin(req.body);
+
+    res.cookie("rms_superadmin_token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Super Admin logged in successfully",
+      data: { admin, token },
+    });
+  } catch (error) {
+    logger.error(`Super Admin login error: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.getSuperAdminMe = async (req, res) => {
+  try {
+    const adminId = req.superAdmin.id || req.superAdmin._id;
+    const data = await branchService.getSuperAdminMe(adminId);
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.logoutSuperAdmin = async (req, res) => {
+  try {
+    res.clearCookie("rms_superadmin_token");
+    res.status(200).json({
+      success: true,
+      message: "Super Admin logged out successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.updateSuperAdminProfile = async (req, res) => {
+  try {
+    const adminId = req.superAdmin.id || req.superAdmin._id;
+    const { name } = req.body;
+    const data = await branchService.updateSuperAdminProfile({ adminId, name });
+    res.status(200).json({
+      success: true,
+      message: "Super Admin profile updated successfully",
+      data,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.updateSuperAdminPassword = async (req, res) => {
+  try {
+    const adminId = req.superAdmin.id || req.superAdmin._id;
+    const { currentPassword, newPassword } = req.body;
+    const result = await branchService.updateSuperAdminPassword({
+      adminId,
+      currentPassword,
+      newPassword,
+    });
+    res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.generateImpersonationToken = async (req, res) => {
+  try {
+    const branchId = req.params.id;
+    const superAdminUser = req.superAdmin;
+    const result = await branchService.createBranchImpersonationToken(branchId, superAdminUser);
+    res.status(200).json({
+      success: true,
+      message: "Impersonation ticket generated successfully",
+      data: result,
+    });
+  } catch (error) {
+    logger.error(`Error generating impersonation ticket: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.verifyImpersonationToken = async (req, res) => {
+  try {
+    const ticket = req.query.ticket || req.body.ticket;
+    const { branch, token } = await branchService.consumeImpersonationToken(ticket);
+
+    res.cookie("rms_branch_token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Impersonation session initialized successfully",
+      data: branch,
+    });
+  } catch (error) {
+    logger.error(`Error consuming impersonation ticket: ${error.message}`);
+    res.status(401).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 exports.createBranch = async (req, res) => {
   try {
     const branch = await branchService.createBranch(req.body);
@@ -219,6 +359,8 @@ exports.getMe = async (req, res) => {
         lat: branch.lat,
         lng: branch.lng,
         isActive: branch.isActive,
+        isLive: branch.isLive,
+        isLocationConfigured: branch.isLocationConfigured,
       },
     });
   } catch (error) {
