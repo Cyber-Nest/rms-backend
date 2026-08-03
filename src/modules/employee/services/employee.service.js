@@ -226,15 +226,19 @@ exports.updateEmployee = async (branchId, id, updateData) => {
     }
   }
 
-  // Sync updated name/phone to Driver model if driverRef exists
-  if (employee.driverRef) {
-    try {
-      await Driver.findByIdAndUpdate(employee.driverRef, {
-        name: employee.name,
-        phone: employee.phone,
-      });
-    } catch (e) {}
-  }
+  try {
+    const driverFilter = employee.driverRef
+      ? { _id: employee.driverRef }
+      : { driverId: employee.employeeId };
+    const driverUpdate = {
+      name: employee.name,
+      phone: employee.phone,
+    };
+    if (updateData.pin !== undefined && updateData.pin !== "") {
+      driverUpdate.password = String(updateData.pin).trim();
+    }
+    await Driver.findOneAndUpdate(driverFilter, driverUpdate);
+  } catch (e) {}
 
   await employee.save();
 

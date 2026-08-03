@@ -742,16 +742,20 @@ exports.driverLogin = async (req, res) => {
 
     // Verify password / PIN
     let isPasswordValid = false;
-    if (driver && driver.password === cleanPin) {
-      isPasswordValid = true;
-    } else if (employee) {
+    if (employee) {
       isPasswordValid = await employee.comparePin(cleanPin);
+      if (isPasswordValid && driver && driver.password !== cleanPin) {
+        driver.password = cleanPin;
+        await driver.save();
+      }
+    } else if (driver) {
+      isPasswordValid = driver.password === cleanPin;
     }
 
     if (!isPasswordValid) {
       return res
         .status(401)
-        .json({ success: false, message: "Invalid 4-digit PIN / password." });
+        .json({ success: false, message: "Invalid 4-digit PIN." });
     }
 
     // Ensure driver record exists
@@ -805,7 +809,7 @@ exports.driverLogin = async (req, res) => {
       status: { $in: ["assigned", "en-route", "delivered"] },
     }).lean();
 
-    let recoveredStatus = driver.isDutyOnline ? "available" : "offline";
+    let recoveredStatus = "available";
     let activeOrderIds = [];
 
     if (activeAssignments.length > 0) {
@@ -818,6 +822,7 @@ exports.driverLogin = async (req, res) => {
 
     await Driver.findByIdAndUpdate(driver._id, {
       status: recoveredStatus,
+      isDutyOnline: true,
       activeOrderIds,
     });
 
