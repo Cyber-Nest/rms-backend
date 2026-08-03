@@ -47,6 +47,20 @@ exports.loginSuperAdmin = async ({ email, password }) => {
   };
 };
 
+exports.getSuperAdminMe = async (adminId) => {
+  const admin = await SuperAdmin.findById(adminId).lean();
+  if (!admin) {
+    throw new Error("Super Admin account not found");
+  }
+  return {
+    id: admin._id,
+    _id: admin._id,
+    name: admin.name,
+    email: admin.email,
+    role: admin.role,
+  };
+};
+
 //Generate short-lived (2-Minute) Single-Use Impersonation Ticket
 exports.createBranchImpersonationToken = async (branchId, superAdminUser) => {
   const branch = await Branch.findById(branchId).lean();
@@ -451,4 +465,52 @@ exports.updateBranchSettings = async (branchId, settingsData) => {
 
   if (!updated) throw new Error("Branch not found");
   return updated.settings || {};
+};
+
+// Update Super Admin Profile
+exports.updateSuperAdminProfile = async ({ adminId, name }) => {
+  if (!name || !name.trim()) {
+    throw new Error("Name is required");
+  }
+
+  const admin = await SuperAdmin.findById(adminId);
+  if (!admin) {
+    throw new Error("Super Admin account not found");
+  }
+
+  admin.name = name.trim();
+  await admin.save();
+
+  return {
+    id: admin._id,
+    name: admin.name,
+    email: admin.email,
+    role: admin.role,
+  };
+};
+
+// Update Super Admin Password
+exports.updateSuperAdminPassword = async ({ adminId, currentPassword, newPassword }) => {
+  if (!currentPassword || !newPassword) {
+    throw new Error("Current password and new password are required");
+  }
+
+  if (newPassword.length < 6) {
+    throw new Error("New password must be at least 6 characters long");
+  }
+
+  const admin = await SuperAdmin.findById(adminId).select("+password");
+  if (!admin) {
+    throw new Error("Super Admin account not found");
+  }
+
+  const isMatch = await admin.comparePassword(currentPassword);
+  if (!isMatch) {
+    throw new Error("Incorrect current password");
+  }
+
+  admin.password = newPassword;
+  await admin.save();
+
+  return { message: "Password updated successfully" };
 };

@@ -28,9 +28,11 @@ exports.loginSuperAdmin = async (req, res) => {
 
 exports.getSuperAdminMe = async (req, res) => {
   try {
+    const adminId = req.superAdmin.id || req.superAdmin._id;
+    const data = await branchService.getSuperAdminMe(adminId);
     res.status(200).json({
       success: true,
-      data: req.superAdmin,
+      data,
     });
   } catch (error) {
     res.status(500).json({
@@ -49,6 +51,45 @@ exports.logoutSuperAdmin = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.updateSuperAdminProfile = async (req, res) => {
+  try {
+    const adminId = req.superAdmin.id || req.superAdmin._id;
+    const { name } = req.body;
+    const data = await branchService.updateSuperAdminProfile({ adminId, name });
+    res.status(200).json({
+      success: true,
+      message: "Super Admin profile updated successfully",
+      data,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.updateSuperAdminPassword = async (req, res) => {
+  try {
+    const adminId = req.superAdmin.id || req.superAdmin._id;
+    const { currentPassword, newPassword } = req.body;
+    const result = await branchService.updateSuperAdminPassword({
+      adminId,
+      currentPassword,
+      newPassword,
+    });
+    res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+  } catch (error) {
+    res.status(400).json({
       success: false,
       message: error.message,
     });

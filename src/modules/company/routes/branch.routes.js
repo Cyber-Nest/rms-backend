@@ -8,6 +8,8 @@ const protectSuperAdmin = require("../../../shared/middleware/protectSuperAdmin"
 router.post("/branches/admin/login", branchController.loginSuperAdmin);
 router.get("/branches/admin/me", protectSuperAdmin, branchController.getSuperAdminMe);
 router.post("/branches/admin/logout", protectSuperAdmin, branchController.logoutSuperAdmin);
+router.put("/branches/admin/profile", protectSuperAdmin, branchController.updateSuperAdminProfile);
+router.put("/branches/admin/password", protectSuperAdmin, branchController.updateSuperAdminPassword);
 
 // ── Super Admin Impersonation Routes ──
 router.post("/branches/impersonate/:id", protectSuperAdmin, branchController.generateImpersonationToken);
