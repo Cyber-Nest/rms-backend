@@ -219,6 +219,8 @@ exports.getMe = async (req, res) => {
         lat: branch.lat,
         lng: branch.lng,
         isActive: branch.isActive,
+        isLive: branch.isLive,
+        isLocationConfigured: branch.isLocationConfigured,
       },
     });
   } catch (error) {

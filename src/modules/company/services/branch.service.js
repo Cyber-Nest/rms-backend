@@ -58,14 +58,17 @@ exports.getAllBranches = async (query = {}) => {
   if (query.isActive !== undefined) {
     filter.isActive = query.isActive === "true" || query.isActive === true;
   }
-  return await Branch.find(filter).sort({ createdAt: -1 });
+  if (query.isLive !== undefined) {
+    filter.isLive = query.isLive === "true" || query.isLive === true;
+  }
+  return await Branch.find(filter).sort({ createdAt: -1 }).lean();
 };
 
 exports.getPublicBranches = async () => {
   await exports.ensureBranchQrCodes();
-  return await Branch.find({ isActive: true })
+  return await Branch.find({ isActive: true, isLive: true })
     .select(
-      "name code address phone email isActive settings.mainSettings.isEmergencyClosed settings.storeTimings settings.taxFeesSettings",
+      "name code address city phone email lat lng isActive isLive isLocationConfigured settings.mainSettings.isEmergencyClosed settings.storeTimings settings.taxFeesSettings",
     )
     .sort({ name: 1 })
     .lean();
@@ -111,10 +114,41 @@ exports.updateBranch = async (id, updateData) => {
     }
   }
 
-  // If updating password, fetch branch & let pre-save hook hash it
+  // Fetch target branch
   let branch = await Branch.findById(id);
   if (!branch) {
     throw new Error("Branch not found");
+  }
+
+  // If branch is deactivated (isActive = false), automatically set isLive = false
+  if (updateData.isActive === false) {
+    updateData.isLive = false;
+  }
+
+  // Go Live Validation Guard
+  if (updateData.isLive === true) {
+    const effectiveIsActive = updateData.isActive !== undefined ? updateData.isActive : branch.isActive;
+    if (!effectiveIsActive) {
+      throw new Error(
+        "Cannot Go Live: Inactive branches cannot be published Live. Please activate the branch first.",
+      );
+    }
+
+    const effectiveLat = updateData.lat !== undefined ? updateData.lat : branch.lat;
+    const effectiveLng = updateData.lng !== undefined ? updateData.lng : branch.lng;
+    const hasValidCoordinates =
+      effectiveLat !== null &&
+      effectiveLng !== null &&
+      effectiveLat !== undefined &&
+      effectiveLng !== undefined &&
+      !(effectiveLat === 0 && effectiveLng === 0);
+
+    if (!hasValidCoordinates && !branch.isLocationConfigured) {
+      throw new Error(
+        "Cannot Go Live: Restaurant exact location (GPS coordinates) must be configured in POS settings first.",
+      );
+    }
+    updateData.isLive = true;
   }
 
   Object.assign(branch, updateData);
@@ -156,7 +190,6 @@ exports.loginBranch = async (email, password) => {
     { expiresIn: "7d" },
   );
 
-  // Prefer settings.mainSettings.latitude/longitude (set via Settings page)
   const settingsLat = branch.settings?.mainSettings?.latitude;
   const settingsLng = branch.settings?.mainSettings?.longitude;
   const resolvedLat = settingsLat !== undefined && settingsLat !== null ? settingsLat : branch.lat;
@@ -168,11 +201,11 @@ exports.loginBranch = async (email, password) => {
       name: branch.name,
       code: branch.code,
       email: branch.email,
-      address: branch.address,
-      city: branch.city,
-      phone: branch.phone,
       lat: resolvedLat,
       lng: resolvedLng,
+      isActive: branch.isActive,
+      isLive: branch.isLive,
+      isLocationConfigured: branch.isLocationConfigured || (resolvedLat !== null && resolvedLng !== null && !(resolvedLat === 0 && resolvedLng === 0)),
     },
     token,
   };
@@ -223,6 +256,13 @@ exports.updateBranchSettings = async (branchId, settingsData) => {
     if (ms.longitude !== undefined) ms.longitude = Number(ms.longitude) || 0;
     if (ms.commission !== undefined) ms.commission = Number(ms.commission) || 0;
     $set["settings.mainSettings"] = ms;
+
+    // Sync root lat & lng for ultra-fast query performance
+    if (ms.latitude && ms.longitude && !(ms.latitude === 0 && ms.longitude === 0)) {
+      $set["lat"] = ms.latitude;
+      $set["lng"] = ms.longitude;
+      $set["isLocationConfigured"] = true;
+    }
   }
   if (settingsData.taxFeesSettings) {
     const tf = settingsData.taxFeesSettings;
