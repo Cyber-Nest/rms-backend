@@ -701,6 +701,17 @@ exports.getSalesSummary = async (filters = {}) => {
       expQuery.expenseDate = { $gte: start, $lte: end };
     }
 
+    try {
+      const legacyExpenses = await Expense.find({ expenseDate: { $type: "date" } }).lean();
+      for (const exp of legacyExpenses) {
+        const dt = new Date(exp.expenseDate);
+        if (dt.getUTCHours() === 0 && dt.getUTCMinutes() === 0 && dt.getUTCSeconds() === 0) {
+          const updatedDate = new Date(dt.getTime() + 12 * 3600 * 1000);
+          await Expense.updateOne({ _id: exp._id }, { $set: { expenseDate: updatedDate } });
+        }
+      }
+    } catch (e) {}
+
     const dropQuery = {
       ...(filters.branchId ? { branchId: filters.branchId } : {}),
       date: targetDateStr,

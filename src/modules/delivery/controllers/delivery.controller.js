@@ -1497,31 +1497,24 @@ exports.getDriverDropSummary = async (req, res) => {
         const order = a.orderId;
 
         // Payment Detail code: PP (Prepaid online), TM (Terminal card), CS (Cash)
-        let pd = "PP";
+        let pd = "CS";
         if (
-          order.orderSource === "online" ||
-          order.paymentTiming === "pay-now" ||
+          ["online", "doordash", "skip", "ubereats"].includes(order.orderSource) ||
           order.paymentMethod === "stripe"
         ) {
           pd = "PP";
         } else if (
-          order.payments &&
-          order.payments.some(
-            (p) =>
-              p.method === "card" ||
-              p.method === "debit" ||
-              p.method === "credit",
-          )
+          (order.payments &&
+            order.payments.some(
+              (p) =>
+                p.method === "card" ||
+                p.method === "debit" ||
+                p.method === "credit",
+            )) ||
+          order.paymentMethod === "card"
         ) {
           pd = "TM";
-        } else if (
-          order.payments &&
-          order.payments.some((p) => p.method === "cash")
-        ) {
-          pd = "CS";
-        } else if (order.paymentMethod === "card") {
-          pd = "TM";
-        } else if (order.paymentMethod === "cash") {
+        } else {
           pd = "CS";
         }
 
@@ -1607,31 +1600,24 @@ exports.settleDriverDrop = async (req, res) => {
       .filter((a) => a.orderId)
       .map((a) => {
         const order = a.orderId;
-        let pd = "PP";
+        let pd = "CS";
         if (
-          order.orderSource === "online" ||
-          order.paymentTiming === "pay-now" ||
+          ["online", "doordash", "skip", "ubereats"].includes(order.orderSource) ||
           order.paymentMethod === "stripe"
         ) {
           pd = "PP";
         } else if (
-          order.payments &&
-          order.payments.some(
-            (p) =>
-              p.method === "card" ||
-              p.method === "debit" ||
-              p.method === "credit",
-          )
+          (order.payments &&
+            order.payments.some(
+              (p) =>
+                p.method === "card" ||
+                p.method === "debit" ||
+                p.method === "credit",
+            )) ||
+          order.paymentMethod === "card"
         ) {
           pd = "TM";
-        } else if (
-          order.payments &&
-          order.payments.some((p) => p.method === "cash")
-        ) {
-          pd = "CS";
-        } else if (order.paymentMethod === "card") {
-          pd = "TM";
-        } else if (order.paymentMethod === "cash") {
+        } else {
           pd = "CS";
         }
 
@@ -1776,31 +1762,24 @@ exports.downloadDriverDropPdf = async (req, res) => {
         .filter((a) => a.orderId)
         .map((a) => {
           const order = a.orderId;
-          let pd = "PP";
+          let pd = "CS";
           if (
-            order.orderSource === "online" ||
-            order.paymentTiming === "pay-now" ||
+            ["online", "doordash", "skip", "ubereats"].includes(order.orderSource) ||
             order.paymentMethod === "stripe"
           ) {
             pd = "PP";
           } else if (
-            order.payments &&
-            order.payments.some(
-              (p) =>
-                p.method === "card" ||
-                p.method === "debit" ||
-                p.method === "credit"
-            )
+            (order.payments &&
+              order.payments.some(
+                (p) =>
+                  p.method === "card" ||
+                  p.method === "debit" ||
+                  p.method === "credit",
+              )) ||
+            order.paymentMethod === "card"
           ) {
             pd = "TM";
-          } else if (
-            order.payments &&
-            order.payments.some((p) => p.method === "cash")
-          ) {
-            pd = "CS";
-          } else if (order.paymentMethod === "card") {
-            pd = "TM";
-          } else if (order.paymentMethod === "cash") {
+          } else {
             pd = "CS";
           }
           return {
