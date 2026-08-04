@@ -89,7 +89,7 @@ exports.deleteModifierGroup = async (req, res) => {
 
 exports.getProducts = async (req, res) => {
   try {
-    const products = await menuService.getAllProducts();
+    const products = await menuService.getAllProducts(req.query);
     res.status(200).json({ success: true, data: products });
   } catch (error) {
     handleError(res, error, 500);

@@ -123,8 +123,16 @@ exports.deleteModifierGroup = async (id) => {
 
 
 
-exports.getAllProducts = async () => {
+exports.getAllProducts = async (query = {}) => {
   try {
+    if (query.minimal === "true" || query.minimal === true) {
+      return await Product.find()
+        .select('_id name price image categoryId productId isActive kitchenLabel disabledBranches outOfStockBranches')
+        .populate('categoryId', 'name')
+        .sort({ name: 1 })
+        .lean();
+    }
+
     return await Product.find()
       .populate('categoryId')
       .populate({
