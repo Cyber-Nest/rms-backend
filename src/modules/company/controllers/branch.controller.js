@@ -302,6 +302,40 @@ exports.checkSession = async (req, res) => {
   }
 };
 
+exports.updateBranchProfile = async (req, res) => {
+  try {
+    const branchId = req.branch?._id || req.body.branchId;
+    const { name, phone, address, city } = req.body;
+
+    if (!branchId) {
+      return res.status(400).json({
+        success: false,
+        message: "Branch ID is required",
+      });
+    }
+
+    const data = await branchService.updateBranchProfile({
+      branchId,
+      name,
+      phone,
+      address,
+      city,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Branch profile updated successfully",
+      data,
+    });
+  } catch (error) {
+    logger.error(`Error updating branch profile: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;

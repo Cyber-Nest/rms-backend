@@ -514,3 +514,72 @@ exports.updateSuperAdminPassword = async ({ adminId, currentPassword, newPasswor
 
   return { message: "Password updated successfully" };
 };
+
+// Update Branch Admin Profile (Name, Phone, Address, City)
+exports.updateBranchProfile = async ({ branchId, name, phone, address, city }) => {
+  if (!branchId) {
+    throw new Error("Branch ID is required");
+  }
+
+  const branch = await Branch.findById(branchId);
+  if (!branch) {
+    throw new Error("Branch not found");
+  }
+
+  if (name && name.trim()) {
+    branch.name = name.trim();
+  }
+  if (phone !== undefined) {
+    branch.phone = phone.trim();
+  }
+  if (address !== undefined) {
+    branch.address = address.trim();
+  }
+  if (city !== undefined) {
+    branch.city = city.trim();
+  }
+
+  await branch.save();
+
+  return {
+    _id: branch._id,
+    id: branch._id,
+    name: branch.name,
+    code: branch.code,
+    email: branch.email,
+    phone: branch.phone,
+    address: branch.address,
+    city: branch.city,
+    lat: branch.lat,
+    lng: branch.lng,
+    isLive: branch.isLive,
+    isActive: branch.isActive,
+    isLocationConfigured: branch.isLocationConfigured,
+  };
+};
+
+// Change Branch Admin Password
+exports.changeBranchPassword = async (branchId, currentPassword, newPassword) => {
+  if (!branchId || !currentPassword || !newPassword) {
+    throw new Error("Current password and new password are required");
+  }
+
+  if (newPassword.length < 6) {
+    throw new Error("New password must be at least 6 characters long");
+  }
+
+  const branch = await Branch.findById(branchId).select("+password");
+  if (!branch) {
+    throw new Error("Branch not found");
+  }
+
+  const isMatch = await branch.comparePassword(currentPassword);
+  if (!isMatch) {
+    throw new Error("Incorrect current password");
+  }
+
+  branch.password = newPassword;
+  await branch.save();
+
+  return { message: "Branch password changed successfully" };
+};
