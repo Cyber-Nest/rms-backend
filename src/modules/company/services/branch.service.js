@@ -213,7 +213,13 @@ exports.getAllBranches = async (query = {}) => {
   if (query.isLive !== undefined) {
     filter.isLive = query.isLive === "true" || query.isLive === true;
   }
-  return await Branch.find(filter).sort({ createdAt: -1 }).lean();
+
+  let projection = "-password -settings -qrCodePayload -__v";
+  if (query.minimal === "true" || query.minimal === true) {
+    projection = "name code isActive isLive";
+  }
+
+  return await Branch.find(filter).select(projection).sort({ createdAt: -1 }).lean();
 };
 
 exports.getPublicBranches = async () => {
