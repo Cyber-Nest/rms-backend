@@ -123,7 +123,7 @@ exports.verifyImpersonationToken = async (req, res) => {
     res.cookie("rms_branch_token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 24 * 60 * 60 * 1000,
     });
 
@@ -299,6 +299,40 @@ exports.checkSession = async (req, res) => {
     });
   } catch {
     res.status(401).json({ success: false, message: "No active terminal session" });
+  }
+};
+
+exports.updateBranchProfile = async (req, res) => {
+  try {
+    const branchId = req.branch?._id || req.body.branchId;
+    const { name, phone, address, city } = req.body;
+
+    if (!branchId) {
+      return res.status(400).json({
+        success: false,
+        message: "Branch ID is required",
+      });
+    }
+
+    const data = await branchService.updateBranchProfile({
+      branchId,
+      name,
+      phone,
+      address,
+      city,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Branch profile updated successfully",
+      data,
+    });
+  } catch (error) {
+    logger.error(`Error updating branch profile: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 

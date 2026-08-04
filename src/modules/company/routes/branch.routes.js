@@ -23,6 +23,7 @@ router.get("/branches/me", protectBranch, branchController.getMe);
 router.get("/branches/check-session", protectBranch, branchController.checkSession);
 router.get("/branches/settings", branchController.getBranchSettings);
 router.patch("/branches/settings", branchController.updateBranchSettings);
+router.put("/branches/profile", branchController.updateBranchProfile);
 router.patch("/branches/change-password", branchController.changePassword);
 
 // ── Super Admin Branch Management Routes ──

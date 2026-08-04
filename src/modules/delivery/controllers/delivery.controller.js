@@ -691,7 +691,7 @@ exports.driverLogin = async (req, res) => {
     let employee = null;
     if (branchId) {
       employee = await Employee.findOne({
-        branchId,
+        branchId: String(branchId),
         $or: [{ employeeId: cleanDriverId }, { phone: cleanDriverId }],
         isActive: true,
       });
@@ -709,13 +709,14 @@ exports.driverLogin = async (req, res) => {
       });
     }
 
-    // Fallback if no branchId was sent
-    if (!driver) {
-      driver = await Driver.findOne({ driverId: cleanDriverId });
-    }
-
-    if (!employee && driver?.driverRef) {
-      employee = await Employee.findById(driver.driverRef);
+    // Fallback ONLY if no branchId was provided in request
+    if (!branchId) {
+      if (!driver) {
+        driver = await Driver.findOne({ driverId: cleanDriverId });
+      }
+      if (!employee && driver?.driverRef) {
+        employee = await Employee.findById(driver.driverRef);
+      }
     }
 
     if (!driver && !employee) {
@@ -723,6 +724,22 @@ exports.driverLogin = async (req, res) => {
         success: false,
         message: "Driver ID is not registered for this restaurant branch.",
       });
+    }
+
+    // Strict Branch Authorization Check
+    if (branchId) {
+      if (driver && String(driver.restaurantId) !== String(branchId)) {
+        return res.status(401).json({
+          success: false,
+          message: "Driver ID is not registered for this restaurant branch.",
+        });
+      }
+      if (employee && String(employee.branchId) !== String(branchId)) {
+        return res.status(401).json({
+          success: false,
+          message: "Driver ID is not registered for this restaurant branch.",
+        });
+      }
     }
 
     //ONLY DRIVERS CAN LOGIN TO DRIVER 
