@@ -221,8 +221,25 @@ exports.markOrderPaid = async (req, res) => {
 
 exports.cancelOrder = async (req, res) => {
   try {
-    const order = await orderService.cancelOrder(req.params.id);
+    const { reason, userName, employeeName } = req.body || {};
+    const order = await orderService.cancelOrder(req.params.id, {
+      reason: reason || "",
+      userName: userName || employeeName || "Manager",
+    });
     res.status(200).json({ success: true, data: order });
+  } catch (error) {
+    handleError(res, error, 400);
+  }
+};
+
+exports.refundOrder = async (req, res) => {
+  try {
+    const { reason, userName, employeeName } = req.body || {};
+    const result = await orderService.refundOrder(req.params.id, {
+      reason,
+      userName: userName || employeeName || 'Manager',
+    });
+    res.status(200).json({ success: true, data: result });
   } catch (error) {
     handleError(res, error, 400);
   }

@@ -22,6 +22,8 @@ router.patch('/:id/kitchen-clear', orderController.kitchenClear);
 router.patch('/:id/due-time', orderController.updateOrderDueTime);
 router.patch('/:id/payment',  orderController.markOrderPaid);
 router.patch('/:id',          orderController.updateOrderItems);
+router.post('/:id/refund',     orderController.refundOrder);
+router.post('/:id/cancel',     orderController.cancelOrder);
 router.delete('/:id',         orderController.cancelOrder);
 
 module.exports = router;
