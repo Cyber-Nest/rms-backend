@@ -130,10 +130,14 @@ const orderSchema = new mongoose.Schema(
     },
     paymentStatus: {
       type: String,
-      enum: ["paid", "unpaid"],
+      enum: ["paid", "unpaid", "refunded"],
       default: "paid",
     },
     payments: { type: [paymentEntrySchema], default: [] },
+
+    refundedAt: { type: Date, default: null },
+    refundedBy: { type: String, default: "" },
+    refundReason: { type: String, default: "" },
 
     orderTiming: {
       type: String,

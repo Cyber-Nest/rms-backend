@@ -233,6 +233,16 @@ exports.createOrder = async (orderData) => {
 
     await order.save();
 
+    // Increment Promo Code usage if applied
+    if (order.promoCode) {
+      try {
+        const promoService = require("../../promo/services/promo.service");
+        promoService.incrementUsage(order.promoCode);
+      } catch (err) {
+        logger.error(`Failed to increment promo usage: ${err.message}`);
+      }
+    }
+
     // Trigger real-time notification to Kitchen via Pusher
     triggerNewOrder(order).catch((err) => {
       logger.error(`Error triggering real-time Pusher event: ${err.message}`);
@@ -554,15 +564,15 @@ exports.markOrderPaid = async (id, payments) => {
 };
 
 // ── Cancel Order ──────────────────────────────────────────────
-exports.cancelOrder = async (id) => {
+exports.cancelOrder = async (id, { reason = "", userName = "Manager" } = {}) => {
   try {
-    // Atomic update
+    const noteText = reason ? `Order Cancelled: ${reason.trim()}` : "Order Cancelled";
     const order = await Order.findOneAndUpdate(
       { _id: id, status: { $nin: ["completed", "cancelled"] } },
       {
-        $set: { status: "cancelled" },
+        $set: { status: "cancelled", cancelReason: reason.trim() },
         $push: {
-          statusHistory: { status: "cancelled", changedAt: new Date() },
+          statusHistory: { status: "cancelled", note: noteText, userName, changedAt: new Date() },
         },
       },
       { new: true },
@@ -574,10 +584,75 @@ exports.cancelOrder = async (id) => {
       throw new Error(`Order is already ${exists.status}.`);
     }
 
-    logger.info(`Order ${order.orderNumber} cancelled`);
+    triggerOrderUpdated(order).catch((err) => {
+      logger.error(`Error triggering cancel Pusher event: ${err.message}`);
+    });
+
+    logger.info(`Order ${order.orderNumber} cancelled by ${userName}. Reason: ${reason}`);
     return order;
   } catch (error) {
     logger.error(`Order Service Error: cancelOrder - ${error.message}`);
+    throw error;
+  }
+};
+
+// ── Refund Order ────────────
+exports.refundOrder = async (id, { reason = "", userName = "Manager" } = {}) => {
+  try {
+    const order = await Order.findById(id);
+    if (!order) throw new Error("Order not found.");
+
+    // Strict Check: POS Orders Only
+    const isPos =
+      order.orderSource === "pos" ||
+      order.placedBy === "POS SYSTEM" ||
+      !["online", "doordash", "skip", "ubereats"].includes(order.orderSource);
+    if (!isPos) {
+      throw new Error("Refund is only allowed for orders placed via POS System.");
+    }
+
+    if (order.paymentStatus === "refunded") {
+      throw new Error("Order has already been refunded.");
+    }
+
+    if (order.status === "cancelled") {
+      throw new Error("Cancelled orders cannot be refunded.");
+    }
+
+    order.status = "cancelled";
+    order.paymentStatus = "refunded";
+    order.refundedAt = new Date();
+    order.refundedBy = userName;
+    order.refundReason = reason.trim() || "Customer POS Refund";
+
+    order.statusHistory.push({
+      status: "refunded",
+      changedAt: new Date(),
+      note: `Order Refunded: ${reason.trim() || "POS Refund"}`,
+      userName,
+    });
+
+    await order.save();
+
+    // Real-time update via Pusher
+    triggerOrderUpdated(order).catch((err) => {
+      logger.error(`Error triggering order refund Pusher event: ${err.message}`);
+    });
+
+    logger.info(`Order ${order.orderNumber} refunded by ${userName}`);
+
+    return {
+      _id: order._id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      refundedAt: order.refundedAt,
+      refundedBy: order.refundedBy,
+      refundReason: order.refundReason,
+      total: order.total,
+    };
+  } catch (error) {
+    logger.error(`Order Service Error: refundOrder - ${error.message}`);
     throw error;
   }
 };
@@ -740,11 +815,13 @@ exports.getSalesSummary = async (filters = {}) => {
         .catch(() => []),
     ]);
 
-    // 1. Completed & Cancelled Orders
+    //Completed & Cancelled & Refunded Orders
     let completedCount = 0;
     let completedTotal = 0;
     let cancelledCount = 0;
     let cancelledTotal = 0;
+    let refundedCount = 0;
+    let refundedTotal = 0;
 
     // Financial sums for completed/valid orders
     let grossSubtotal = 0;
@@ -776,7 +853,10 @@ exports.getSalesSummary = async (filters = {}) => {
     let totalTips = 0;
 
     for (const order of orders) {
-      if (order.status === "cancelled") {
+      if (order.paymentStatus === "refunded") {
+        refundedCount += 1;
+        refundedTotal += order.total || 0;
+      } else if (order.status === "cancelled") {
         cancelledCount += 1;
         cancelledTotal += order.total || 0;
       } else {
@@ -896,7 +976,10 @@ exports.getSalesSummary = async (filters = {}) => {
         count: cancelledCount,
         totalAmount: round2(cancelledTotal),
       },
-      refundOrders: { count: 0, totalAmount: 0 },
+      refundOrders: {
+        count: refundedCount,
+        totalAmount: round2(refundedTotal),
+      },
       financials: {
         allCategoryTotal: round2(grossSubtotal),
         subTotal: round2(grossSubtotal),
@@ -2168,6 +2251,9 @@ exports.getMonthlySalesSummary = async ({
                 payments: "$payments",
                 orderSource: "$orderSource",
                 status: "$status",
+                discount: "$discount",
+                discountType: "$discountType",
+                promoCode: "$promoCode",
               },
             },
           },
@@ -2233,13 +2319,26 @@ exports.getMonthlySalesSummary = async ({
       }
     }
 
-    // Process payment breakdowns per day from pushed orders
+    // Process payment & promo breakdowns per day from pushed orders
     for (const [, day] of dayDataMap) {
       let cashSales = 0,
         cardSales = 0,
         accountPaySales = 0;
+      const promoMap = new Map();
+
       for (const o of day.orders) {
         if (o.status === "cancelled") continue;
+
+        if (o.promoCode) {
+          const codeKey = String(o.promoCode).toUpperCase();
+          if (!promoMap.has(codeKey)) {
+            promoMap.set(codeKey, { code: codeKey, count: 0, totalDiscount: 0 });
+          }
+          const pData = promoMap.get(codeKey);
+          pData.count += 1;
+          pData.totalDiscount += Number(o.discount || 0);
+        }
+
         const orderPayments =
           o.payments && o.payments.length > 0
             ? o.payments
@@ -2259,6 +2358,11 @@ exports.getMonthlySalesSummary = async ({
       day.cashSales = cashSales;
       day.cardSales = cardSales;
       day.accountPaySales = accountPaySales;
+      day.promoSummary = Array.from(promoMap.values()).map((p) => ({
+        code: p.code,
+        count: p.count,
+        totalDiscount: Math.round(p.totalDiscount * 100) / 100,
+      }));
       delete day.orders; // Free memory
     }
 
@@ -2371,6 +2475,7 @@ exports.getMonthlySalesSummary = async ({
           grandTotal: round2(grandTotal),
           tips: round2(tips),
           finalAmount: round2(finalAmount),
+          promoSummary: day.promoSummary || [],
         },
         paymentType: {
           cash: finalCashSales,

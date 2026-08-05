@@ -6,20 +6,21 @@ const handleError = (res, error, status = 400) => {
   return res.status(status).json({ success: false, message: error.message });
 };
 
-
 exports.validatePromo = async (req, res) => {
   try {
-    const { code, subtotal } = req.body;
-    if (!code) return res.status(400).json({ success: false, message: 'Promo code is required.' });
-    if (subtotal === undefined) return res.status(400).json({ success: false, message: 'Subtotal is required.' });
-
-    const result = await promoService.validatePromo(code, Number(subtotal));
+    const { code, channel, branchId, subtotal, items } = req.body || {};
+    const result = await promoService.validatePromo({
+      code,
+      channel: channel || 'both',
+      branchId: branchId || null,
+      subtotal: Number(subtotal) || 0,
+      items: items || [],
+    });
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     handleError(res, error, 400);
   }
 };
-
 
 exports.createPromo = async (req, res) => {
   try {
@@ -30,16 +31,30 @@ exports.createPromo = async (req, res) => {
   }
 };
 
-
 exports.getAllPromos = async (req, res) => {
   try {
-    const promos = await promoService.getAllPromos();
-    res.status(200).json({ success: true, data: promos });
+    const { search, channel, status, page, limit } = req.query;
+    const result = await promoService.getAllPromos({
+      search,
+      channel,
+      status,
+      page,
+      limit,
+    });
+    res.status(200).json({ success: true, data: result });
   } catch (error) {
     handleError(res, error, 500);
   }
 };
 
+exports.getPromoById = async (req, res) => {
+  try {
+    const promo = await promoService.getPromoById(req.params.id);
+    res.status(200).json({ success: true, data: promo });
+  } catch (error) {
+    handleError(res, error, 404);
+  }
+};
 
 exports.updatePromo = async (req, res) => {
   try {
@@ -50,11 +65,22 @@ exports.updatePromo = async (req, res) => {
   }
 };
 
+exports.toggleStatus = async (req, res) => {
+  try {
+    const promo = await promoService.toggleStatus(req.params.id);
+    res.status(200).json({ success: true, data: promo });
+  } catch (error) {
+    handleError(res, error, 400);
+  }
+};
 
 exports.deletePromo = async (req, res) => {
   try {
     await promoService.deletePromo(req.params.id);
-    res.status(200).json({ success: true, message: 'Promo deleted successfully.' });
+    res.status(200).json({
+      success: true,
+      message: 'Promo code deleted successfully.',
+    });
   } catch (error) {
     handleError(res, error, 400);
   }
