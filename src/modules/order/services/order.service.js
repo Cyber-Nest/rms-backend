@@ -233,6 +233,16 @@ exports.createOrder = async (orderData) => {
 
     await order.save();
 
+    // Increment Promo Code usage if applied
+    if (order.promoCode) {
+      try {
+        const promoService = require("../../promo/services/promo.service");
+        promoService.incrementUsage(order.promoCode);
+      } catch (err) {
+        logger.error(`Failed to increment promo usage: ${err.message}`);
+      }
+    }
+
     // Trigger real-time notification to Kitchen via Pusher
     triggerNewOrder(order).catch((err) => {
       logger.error(`Error triggering real-time Pusher event: ${err.message}`);
@@ -2241,6 +2251,9 @@ exports.getMonthlySalesSummary = async ({
                 payments: "$payments",
                 orderSource: "$orderSource",
                 status: "$status",
+                discount: "$discount",
+                discountType: "$discountType",
+                promoCode: "$promoCode",
               },
             },
           },
@@ -2306,13 +2319,26 @@ exports.getMonthlySalesSummary = async ({
       }
     }
 
-    // Process payment breakdowns per day from pushed orders
+    // Process payment & promo breakdowns per day from pushed orders
     for (const [, day] of dayDataMap) {
       let cashSales = 0,
         cardSales = 0,
         accountPaySales = 0;
+      const promoMap = new Map();
+
       for (const o of day.orders) {
         if (o.status === "cancelled") continue;
+
+        if (o.promoCode) {
+          const codeKey = String(o.promoCode).toUpperCase();
+          if (!promoMap.has(codeKey)) {
+            promoMap.set(codeKey, { code: codeKey, count: 0, totalDiscount: 0 });
+          }
+          const pData = promoMap.get(codeKey);
+          pData.count += 1;
+          pData.totalDiscount += Number(o.discount || 0);
+        }
+
         const orderPayments =
           o.payments && o.payments.length > 0
             ? o.payments
@@ -2332,6 +2358,11 @@ exports.getMonthlySalesSummary = async ({
       day.cashSales = cashSales;
       day.cardSales = cardSales;
       day.accountPaySales = accountPaySales;
+      day.promoSummary = Array.from(promoMap.values()).map((p) => ({
+        code: p.code,
+        count: p.count,
+        totalDiscount: Math.round(p.totalDiscount * 100) / 100,
+      }));
       delete day.orders; // Free memory
     }
 
@@ -2444,6 +2475,7 @@ exports.getMonthlySalesSummary = async ({
           grandTotal: round2(grandTotal),
           tips: round2(tips),
           finalAmount: round2(finalAmount),
+          promoSummary: day.promoSummary || [],
         },
         paymentType: {
           cash: finalCashSales,

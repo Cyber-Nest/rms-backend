@@ -1,14 +1,12 @@
 const Promo = require('../models/promo.model');
 const logger = require('../../../shared/utils/logger');
 
-// Fast Validation for Online & POS Checkouts
 exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtotal = 0, items = [] }) => {
   try {
     if (!code) throw new Error('Promo code is required.');
 
     const cleanCode = String(code).toUpperCase().trim();
 
-    // Fast indexed query with select projection
     const promo = await Promo.findOne({ code: cleanCode, isActive: true })
       .select(
         'code description discountType discountValue minOrderAmount maxDiscount applicableChannel applicableScope categoryIds applicableBranchScope branchIds usageLimit usedCount startDate expiresAt isActive'
@@ -19,7 +17,7 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       throw new Error('Invalid or inactive promo code.');
     }
 
-    // 1. Channel check
+    // Channel check
     if (promo.applicableChannel !== 'both' && promo.applicableChannel !== channel) {
       const channelLabel =
         promo.applicableChannel === 'online'
@@ -28,7 +26,7 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       throw new Error(`This promo code is only valid for ${channelLabel}.`);
     }
 
-    // 2. Branch Scope check
+    //Branch Scope check
     if (
       promo.applicableBranchScope === 'specific_branches' &&
       Array.isArray(promo.branchIds) &&
@@ -44,7 +42,7 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       }
     }
 
-    // 2. Date Range check
+    //Date Range check
     const now = new Date();
     if (promo.startDate && now < new Date(promo.startDate)) {
       throw new Error('This promo code is not active yet.');
@@ -53,12 +51,12 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       throw new Error('This promo code has expired.');
     }
 
-    // 3. Usage Limit check
+    //Usage Limit check
     if (promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
       throw new Error('This promo code has reached its maximum usage limit.');
     }
 
-    // 4. Category-based Cart Subtotal Calculation
+    //Category-based Cart Subtotal Calculation
     let eligibleSubtotal = Number(subtotal) || 0;
 
     if (
@@ -72,14 +70,43 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
 
       let matchedAmount = 0;
       for (const item of items) {
-        const itemCat = String(
-          item.categoryId || item.categoryName || item.category || ''
-        ).toLowerCase();
-        const isEligible = promo.categoryIds.some(
-          (cat) =>
-            String(cat).toLowerCase() === itemCat ||
-            itemCat.includes(String(cat).toLowerCase())
-        );
+        const itemCatId = String(item.categoryId || '').toLowerCase().trim();
+        const itemCatName = String(item.categoryName || item.category || '').toLowerCase().trim();
+        const itemName = String(item.name || '').toLowerCase().trim();
+
+        //Direct payload match (category ID, category name, or item name)
+        let isEligible = promo.categoryIds.some((cat) => {
+          const cStr = String(cat).toLowerCase().trim();
+          if (!cStr) return false;
+          return (
+            (itemCatId && (itemCatId === cStr || itemCatId.includes(cStr) || cStr.includes(itemCatId))) ||
+            (itemCatName && (itemCatName === cStr || itemCatName.includes(cStr) || cStr.includes(itemCatName))) ||
+            (itemName && itemName.includes(cStr))
+          );
+        });
+
+        if (!isEligible && (item.menuItemId || item.id)) {
+          try {
+            const menuItemId = item.menuItemId || item.id;
+            const MenuItem = require('../../menu/models/menuItem.model');
+            const Category = require('../../menu/models/category.model');
+            const dbItem = await MenuItem.findById(menuItemId).select('categoryId').lean();
+            if (dbItem && dbItem.categoryId) {
+              const dbCat = await Category.findById(dbItem.categoryId).select('name').lean();
+              const dbCatIdStr = String(dbItem.categoryId).toLowerCase().trim();
+              const dbCatNameStr = dbCat?.name ? String(dbCat.name).toLowerCase().trim() : '';
+
+              isEligible = promo.categoryIds.some((cat) => {
+                const cStr = String(cat).toLowerCase().trim();
+                return (
+                  cStr === dbCatIdStr ||
+                  (dbCatNameStr && (dbCatNameStr === cStr || dbCatNameStr.includes(cStr) || cStr.includes(dbCatNameStr)))
+                );
+              });
+            }
+          } catch (e) {
+          }
+        }
 
         if (isEligible) {
           const itemTotal =
@@ -97,7 +124,7 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       eligibleSubtotal = matchedAmount;
     }
 
-    // 5. Min Order Amount check
+    //Min Order Amount check
     if (eligibleSubtotal < (promo.minOrderAmount || 0)) {
       throw new Error(
         `Minimum order amount of $${promo.minOrderAmount.toFixed(
@@ -106,7 +133,7 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       );
     }
 
-    // 6. Calculate final discount
+    // Calculate final discount
     let discountAmount = 0;
     if (promo.discountType === 'percentage') {
       discountAmount = (eligibleSubtotal * promo.discountValue) / 100;

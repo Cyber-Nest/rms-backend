@@ -167,6 +167,7 @@ exports.getDeliveryOrders = async (req, res) => {
         customerName: order.customer?.name || "Unknown",
         customerPhone: order.customer?.phone || "",
         deliveryAddress: order.customer?.address || "",
+        notes: order.notes || "",
         coordinates: {
           lat: order.customer?.lat || null,
           lng: order.customer?.lng || null,
@@ -903,6 +904,7 @@ exports.getDriverAssignments = async (req, res) => {
               deliveryAddress: order.customer?.address || "",
               items: (order.items || []).map((i) => `${i.quantity}x ${i.name}`),
               total: order.total || 0,
+              notes: order.notes || "",
             }
           : null,
       };
