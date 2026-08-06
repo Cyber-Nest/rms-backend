@@ -270,7 +270,7 @@ const VALID_PERMISSION_KEYS = [
   "pos", "kitchen", "reception_view", "delivery", "driver_drop",
   "vehicles", "customers", "employees", "menus", "setting",
   // /employee/orders sub-tabs
-  "dashboard", "orders", "sales_summary", "expense_payout", "reports",
+  "dashboard", "orders", "orders_list", "sales_summary", "expense_payout", "reports",
   "item_sales", "hourly_sales", "cash_out_summary",
   "monthly_sales_summary", "failed_transaction", "refund_orders",
 ];

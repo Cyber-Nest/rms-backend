@@ -66,6 +66,7 @@ const employeeSchema = new mongoose.Schema(
       //orders sub-tabs
       dashboard:              { type: Boolean, default: false },
       orders:                 { type: Boolean, default: false },
+      orders_list:            { type: Boolean, default: false },
       sales_summary:          { type: Boolean, default: false },
       expense_payout:         { type: Boolean, default: false },
       reports:                { type: Boolean, default: false },
