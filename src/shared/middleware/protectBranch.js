@@ -22,15 +22,25 @@ const protectBranch = (req, res, next) => {
       token = req.headers["rms_branch_token"];
     }
 
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "Access denied. Authentication token missing.",
-      });
+    if (token) {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.branch = decoded;
+      req.activeBranchId = decoded.branchId || decoded._id || decoded.id;
+    } else {
+      // Fallback: extract branchId from query/body/headers for branch POS requests
+      const fallbackBranchId =
+        req.query.branchId ||
+        req.query.restaurantId ||
+        req.body?.branchId ||
+        req.body?.restaurantId ||
+        req.headers["x-branch-id"];
+
+      if (fallbackBranchId) {
+        req.branch = { branchId: String(fallbackBranchId) };
+        req.activeBranchId = String(fallbackBranchId);
+      }
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.branch = decoded;
     next();
   } catch (error) {
     return res.status(401).json({

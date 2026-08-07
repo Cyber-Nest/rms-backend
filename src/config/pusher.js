@@ -95,20 +95,29 @@ const triggerOrderUpdated = async (order) => {
 };
 
 
-/**
- * Authenticates a client to subscribe to a private Pusher channel.
- */
-const authenticateChannel = (socketId, channelName) => {
+const authenticateChannel = (socketId, channelName, context = {}) => {
   if (!pusherInstance) {
     throw new Error("Pusher is not initialized.");
   }
+
+  if (channelName.startsWith("private-order-")) {
+    return pusherInstance.authorizeChannel(socketId, channelName);
+  }
+
+  if (channelName.startsWith("private-restaurant-")) {
+    const channelBranchId = channelName.replace("private-restaurant-", "").trim();
+    const reqBranchId = context.branchId ? String(context.branchId) : null;
+
+    if (reqBranchId && reqBranchId !== channelBranchId && !context.isSuperAdmin) {
+      throw new Error("Forbidden: Cannot subscribe to another restaurant's private channel.");
+    }
+    return pusherInstance.authorizeChannel(socketId, channelName);
+  }
+
   return pusherInstance.authorizeChannel(socketId, channelName);
 };
 
 
-/**
- * Sends to both restaurant channel (branch) and order channel (user/driver).
- */
 const triggerDeliveryAssigned = async (restaurantId, orderId, driverInfo) => {
   if (!pusherInstance) {
     logger.debug("Pusher is not initialized, skipping delivery-assigned trigger.");
@@ -136,9 +145,6 @@ const triggerDeliveryAssigned = async (restaurantId, orderId, driverInfo) => {
   }
 };
 
-/**
- * Triggered when delivery status changes (en-route, delivered, completed).
- */
 const triggerDeliveryStatusUpdate = async (restaurantId, orderId, statusData) => {
   if (!pusherInstance) {
     logger.debug("Pusher is not initialized, skipping delivery-status-update trigger.");
@@ -154,7 +160,6 @@ const triggerDeliveryStatusUpdate = async (restaurantId, orderId, statusData) =>
 
   try {
     const channels = [`private-restaurant-${restaurantId}`];
-    // Only send to order channel if not 'completed' (user tracking already ended)
     if (statusData.status !== "completed") {
       channels.push(`private-order-${orderId}`);
     }
@@ -165,9 +170,6 @@ const triggerDeliveryStatusUpdate = async (restaurantId, orderId, statusData) =>
   }
 };
 
-/**
- * Triggered when driver goes online/offline or becomes available after returning.
- */
 const triggerDriverStatusChange = async (restaurantId, driverData) => {
   if (!pusherInstance) {
     logger.debug("Pusher is not initialized, skipping driver-status-change trigger.");

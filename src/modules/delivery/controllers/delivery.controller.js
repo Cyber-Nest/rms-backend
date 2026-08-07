@@ -6,8 +6,13 @@ const Order = require("../../order/models/order.model");
 const Attendance = require("../../employee/models/attendance.model");
 const Employee = require("../../employee/models/employee.model");
 const driverDropPdfService = require("../services/driverDropPdf.service");
-
 const logger = require("../../../shared/utils/logger");
+
+const {
+  getLocalStartOfDay,
+  getLocalEndOfDay,
+  getLocalDateStr,
+} = require("../../../shared/utils/timezone");
 const {
   authenticateChannel,
   triggerDeliveryAssigned,
@@ -58,7 +63,6 @@ exports.pusherAuth = async (req, res) => {
       });
     }
 
-    // Validate channel name pattern (only allow our delivery channels)
     const validPatterns = [/^private-restaurant-.+$/, /^private-order-.+$/];
     const isValid = validPatterns.some((p) => p.test(channel_name));
     if (!isValid) {
@@ -67,7 +71,25 @@ exports.pusherAuth = async (req, res) => {
         .json({ success: false, message: "Invalid channel name." });
     }
 
-    const authResponse = authenticateChannel(socket_id, channel_name);
+    let branchId = null;
+    let isSuperAdmin = false;
+
+    let token = req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.split(" ")[1]
+      : req.cookies?.rms_branch_token || req.headers["x-branch-token"];
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        branchId = decoded.branchId || decoded._id;
+        isSuperAdmin = decoded.role === "super_admin";
+      } catch (e) {}
+    }
+
+    const authResponse = authenticateChannel(socket_id, channel_name, {
+      branchId,
+      isSuperAdmin,
+    });
     res.status(200).json(authResponse);
   } catch (error) {
     handleError(res, error, 500);
@@ -81,7 +103,6 @@ exports.getDeliveryOrders = async (req, res) => {
     const { status } = req.query;
     const restaurantId = getRestaurantIdFromReq(req);
 
-    // Get today's start and end
     const now = new Date();
     const startOfDay = new Date(
       now.getFullYear(),
@@ -106,7 +127,6 @@ exports.getDeliveryOrders = async (req, res) => {
           orderTiming: { $exists: false },
           createdAt: { $gte: startOfDay, $lte: endOfDay },
         },
-        //active undelivered orders from previous days
         {
           status: { $in: ["pending", "preparing", "ready"] },
         },
@@ -134,7 +154,6 @@ exports.getDeliveryOrders = async (req, res) => {
       }
     });
 
-    // Enrich orders with delivery assignment data
     const enrichedOrders = orders.map((order) => {
       const assignment = assignmentMap[order._id.toString()];
 
@@ -156,7 +175,6 @@ exports.getDeliveryOrders = async (req, res) => {
         }
       }
 
-      // If order itself is completed/cancelled, mark as delivered
       if (order.status === "completed" || order.status === "cancelled") {
         deliveryStatus = "delivered";
       }
@@ -206,29 +224,28 @@ exports.getDeliveryOrders = async (req, res) => {
 exports.getDrivers = async (req, res) => {
   try {
     const restaurantId = getRestaurantIdFromReq(req);
-    const drivers = await Driver.find({ restaurantId })
-      .select(
-        "_id driverId name phone status isDutyOnline color activeOrderIds currentLocation assignedVehicleId",
-      )
-      .populate(
-        "assignedVehicleId",
-        "_id number label isAssigned assignedDriverId",
-      )
-      .lean();
+    const [drivers, employees] = await Promise.all([
+      Driver.find({ restaurantId })
+        .select(
+          "_id driverId name phone status isDutyOnline color activeOrderIds currentLocation assignedVehicleId",
+        )
+        .populate(
+          "assignedVehicleId",
+          "_id number label isAssigned assignedDriverId",
+        )
+        .lean(),
+      Employee.find({
+        branchId: restaurantId,
+        $or: [{ role: "driver" }, { driverRef: { $exists: true, $ne: null } }],
+        isActive: true,
+      })
+        .select("_id employeeId driverRef")
+        .lean(),
+    ]);
 
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
-    // Get all driver-role employees for this branch
-    const employees = await Employee.find({
-      branchId: restaurantId,
-      $or: [{ role: "driver" }, { driverRef: { $exists: true, $ne: null } }],
-      isActive: true,
-    })
-      .select("_id employeeId driverRef")
-      .lean();
-
-    // Get today's checked-in attendance records for these employees
     const empIds = employees.map((e) => e._id);
     const attendances = await Attendance.find({
       branchId: restaurantId,
@@ -304,7 +321,6 @@ exports.getVehicles = async (req, res) => {
   try {
     const restaurantId = getRestaurantIdFromReq(req);
 
-    // Auto-migrate legacy 'default' vehicles to the active restaurant branch if any
     if (restaurantId !== "default") {
       const branchCount = await Vehicle.countDocuments({ restaurantId });
       if (branchCount === 0) {
@@ -328,7 +344,6 @@ exports.getVehicles = async (req, res) => {
 
 /**
  * POST: Create a new vehicle.
- * Body: { number, label, restaurantId }
  */
 exports.createVehicle = async (req, res) => {
   try {
@@ -344,7 +359,6 @@ exports.createVehicle = async (req, res) => {
     number = String(number).trim().toUpperCase();
     label = String(label).trim();
 
-    // Alphanumeric validation
     const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
     if (!alphanumericRegex.test(number)) {
       return res.status(400).json({
@@ -354,7 +368,6 @@ exports.createVehicle = async (req, res) => {
       });
     }
 
-    // Check if number already exists for this restaurant
     const existing = await Vehicle.findOne({ number, restaurantId });
     if (existing) {
       return res.status(400).json({
@@ -374,8 +387,6 @@ exports.createVehicle = async (req, res) => {
 
 /**
  * PUT: Update an existing vehicle.
- * Params: id
- * Body: { number, label }
  */
 exports.updateVehicle = async (req, res) => {
   try {
@@ -393,7 +404,6 @@ exports.updateVehicle = async (req, res) => {
     number = String(number).trim().toUpperCase();
     label = String(label).trim();
 
-    // Alphanumeric validation
     const alphanumericRegex = /^[a-zA-Z0-9 -]+$/;
     if (!alphanumericRegex.test(number)) {
       return res.status(400).json({
@@ -410,7 +420,6 @@ exports.updateVehicle = async (req, res) => {
         .json({ success: false, message: "Vehicle not found." });
     }
 
-    // Check for duplicate vehicle number if changed
     if (vehicle.number !== number) {
       const existing = await Vehicle.findOne({ number, restaurantId });
       if (existing) {
@@ -433,7 +442,6 @@ exports.updateVehicle = async (req, res) => {
 
 /**
  * DELETE: Delete a vehicle.
- * Params: id
  */
 exports.deleteVehicle = async (req, res) => {
   try {
@@ -447,7 +455,6 @@ exports.deleteVehicle = async (req, res) => {
         .json({ success: false, message: "Vehicle not found." });
     }
 
-    // If vehicle is assigned to a driver, unassign it first
     if (vehicle.isAssigned && vehicle.assignedDriverId) {
       await Driver.findByIdAndUpdate(vehicle.assignedDriverId, {
         assignedVehicleId: null,
@@ -466,7 +473,6 @@ exports.deleteVehicle = async (req, res) => {
 
 /**
  * POST: Assign a Driver to a Delivery Order.
- * Body: { orderId, driverId }
  */
 exports.assignDriver = async (req, res) => {
   try {
@@ -497,7 +503,6 @@ exports.assignDriver = async (req, res) => {
         .json({ success: false, message: "Order not found." });
     }
 
-    // Check if already assigned
     const existingAssignment = await DeliveryAssignment.findOne({
       orderId,
       status: { $in: ["assigned", "en-route"] },
@@ -509,7 +514,6 @@ exports.assignDriver = async (req, res) => {
       });
     }
 
-    // Create delivery assignment
     const assignment = await DeliveryAssignment.create({
       orderId,
       driverId: driver._id,
@@ -523,15 +527,12 @@ exports.assignDriver = async (req, res) => {
       restaurantId: driver.restaurantId,
     });
 
-    // Update driver status and active orders
     driver.status = "on-delivery";
     driver.activeOrderIds.push(orderId);
     await driver.save();
 
-    // Get vehicle info for Pusher event
     const vehicle = await Vehicle.findById(driver.assignedVehicleId).lean();
 
-    // Trigger Pusher events
     await triggerDeliveryAssigned(driver.restaurantId, orderId.toString(), {
       driverId: driver._id.toString(),
       name: driver.name,
@@ -558,7 +559,6 @@ exports.assignDriver = async (req, res) => {
 
 /**
  * POST: Assign a vehicle to a driver.
- * Body: { driverId, vehicleId }
  */
 exports.assignVehicle = async (req, res) => {
   try {
@@ -621,7 +621,6 @@ exports.assignVehicle = async (req, res) => {
       }
     }
 
-    // Unassign current vehicle if any
     if (driver.assignedVehicleId) {
       await Vehicle.findByIdAndUpdate(driver.assignedVehicleId, {
         isAssigned: false,
@@ -629,7 +628,6 @@ exports.assignVehicle = async (req, res) => {
       });
     }
 
-    // Assign new vehicle
     vehicle.isAssigned = true;
     vehicle.assignedDriverId = driver._id;
     await vehicle.save();
@@ -645,7 +643,6 @@ exports.assignVehicle = async (req, res) => {
 
 /**
  * POST: Unassign vehicle from a driver.
- * Body: { driverId }
  */
 exports.unassignVehicle = async (req, res) => {
   try {
@@ -688,7 +685,6 @@ exports.driverLogin = async (req, res) => {
     const cleanDriverId = driverId.trim().toUpperCase();
     const cleanPin = password.trim();
 
-    // 1. Find Employee for this specific branch
     let employee = null;
     if (branchId) {
       employee = await Employee.findOne({
@@ -698,7 +694,6 @@ exports.driverLogin = async (req, res) => {
       });
     }
 
-    // 2. Find Driver record for this specific branch
     let driver = null;
     if (branchId) {
       driver = await Driver.findOne({
@@ -710,7 +705,6 @@ exports.driverLogin = async (req, res) => {
       });
     }
 
-    // Fallback ONLY if no branchId was provided in request
     if (!branchId) {
       if (!driver) {
         driver = await Driver.findOne({ driverId: cleanDriverId });
@@ -727,7 +721,6 @@ exports.driverLogin = async (req, res) => {
       });
     }
 
-    // Strict Branch Authorization Check
     if (branchId) {
       if (driver && String(driver.restaurantId) !== String(branchId)) {
         return res.status(401).json({
@@ -743,7 +736,6 @@ exports.driverLogin = async (req, res) => {
       }
     }
 
-    //ONLY DRIVERS CAN LOGIN TO DRIVER 
     const isDriverRole =
       employee?.role === "driver" ||
       Boolean(employee?.driverRef) ||
@@ -758,16 +750,18 @@ exports.driverLogin = async (req, res) => {
       });
     }
 
-    // Verify password / PIN
     let isPasswordValid = false;
     if (employee) {
       isPasswordValid = await employee.comparePin(cleanPin);
-      if (isPasswordValid && driver && driver.password !== cleanPin) {
-        driver.password = cleanPin;
-        await driver.save();
+      if (isPasswordValid && driver) {
+        const matches = await driver.comparePassword(cleanPin);
+        if (!matches) {
+          driver.password = cleanPin;
+          await driver.save();
+        }
       }
     } else if (driver) {
-      isPasswordValid = driver.password === cleanPin;
+      isPasswordValid = await driver.comparePassword(cleanPin);
     }
 
     if (!isPasswordValid) {
@@ -776,11 +770,9 @@ exports.driverLogin = async (req, res) => {
         .json({ success: false, message: "Invalid 4-digit PIN." });
     }
 
-    // Ensure driver record exists
     const targetBranchId =
       branchId || driver?.restaurantId || employee?.branchId;
     if (!driver && employee) {
-      // Create Driver model linked to employee if missing
       driver = new Driver({
         driverId: employee.employeeId,
         name: employee.name,
@@ -794,7 +786,6 @@ exports.driverLogin = async (req, res) => {
       await employee.save();
     }
 
-    // ── MANDATORY POS CHECK-IN VERIFICATION ──
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
@@ -821,7 +812,6 @@ exports.driverLogin = async (req, res) => {
       }
     }
 
-    // Check if the driver has active assignments to recover their state
     const activeAssignments = await DeliveryAssignment.find({
       driverId: driver._id,
       status: { $in: ["assigned", "en-route", "delivered"] },
@@ -844,13 +834,11 @@ exports.driverLogin = async (req, res) => {
       activeOrderIds,
     });
 
-    // Get vehicle info
     let assignedVehicle = null;
     if (driver.assignedVehicleId) {
       assignedVehicle = await Vehicle.findById(driver.assignedVehicleId).lean();
     }
 
-    // Trigger status change
     await triggerDriverStatusChange(driver.restaurantId, {
       driverId: driver._id.toString(),
       status: recoveredStatus,
@@ -889,7 +877,6 @@ exports.getDriverAssignments = async (req, res) => {
       .sort({ assignedAt: -1 })
       .lean();
 
-    // Enrich with order data
     const enriched = assignments.map((a) => {
       const order = a.orderId;
       return {
@@ -917,7 +904,7 @@ exports.getDriverAssignments = async (req, res) => {
 };
 
 /**
- * POST: Driver marks a delivery as delivered. GPS continues (returning phase).
+ * POST: Driver marks a delivery as delivered.
  */
 exports.markDelivered = async (req, res) => {
   try {
@@ -945,7 +932,6 @@ exports.markDelivered = async (req, res) => {
       await driver.save();
     }
 
-    // Update the original order status to completed (delivered to customer)
     const order = await Order.findByIdAndUpdate(
       assignment.orderId,
       {
@@ -961,7 +947,6 @@ exports.markDelivered = async (req, res) => {
       { new: true },
     );
 
-    // Trigger Pusher events
     await triggerDeliveryStatusUpdate(
       assignment.restaurantId,
       assignment.orderId.toString(),
@@ -990,7 +975,6 @@ exports.markDelivered = async (req, res) => {
 
 /**
  * POST: Auto-called when driver reaches restaurant (< 200m).
- * Sets assignment to completed, driver to available.
  */
 exports.markCompleted = async (req, res) => {
   try {
@@ -1007,7 +991,6 @@ exports.markCompleted = async (req, res) => {
     assignment.completedAt = new Date();
     await assignment.save();
 
-    // Set driver to available if online, else offline
     const driver = await Driver.findById(assignment.driverId);
     if (driver) {
       driver.status = driver.isDutyOnline ? "available" : "offline";
@@ -1020,7 +1003,6 @@ exports.markCompleted = async (req, res) => {
       });
     }
 
-    // Also update the original order status to completed
     await Order.findByIdAndUpdate(assignment.orderId, {
       status: "completed",
       $push: {
@@ -1040,7 +1022,6 @@ exports.markCompleted = async (req, res) => {
 
 /**
  * PATCH: Driver goes online/offline.
- * Body: { status: 'available' | 'offline' }
  */
 exports.updateDriverStatus = async (req, res) => {
   try {
@@ -1092,7 +1073,6 @@ exports.getDriverById = async (req, res) => {
         .json({ success: false, message: "Driver not found." });
     }
 
-    // Check today's POS attendance status
     let posCheckedIn = true;
     try {
       const employee = await Employee.findOne({
@@ -1156,9 +1136,6 @@ exports.getDriverById = async (req, res) => {
 };
 
 // ─── USER TRACKING API ───
-/**
- * GET: Get delivery tracking info for a specific order.
- */
 exports.trackDelivery = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -1212,7 +1189,6 @@ exports.trackDelivery = async (req, res) => {
 
 /**
  * POST: Unassign Driver from Order
- * Body: { orderId }
  */
 exports.unassignDriver = async (req, res) => {
   try {
@@ -1238,10 +1214,8 @@ exports.unassignDriver = async (req, res) => {
     const driverId = assignment.driverId;
     const restaurantId = assignment.restaurantId || "default";
 
-    // Delete assignment
     await DeliveryAssignment.deleteOne({ _id: assignment._id });
 
-    // Update driver state
     const driver = await Driver.findById(driverId);
     if (driver) {
       driver.activeOrderIds = driver.activeOrderIds.filter(
@@ -1252,17 +1226,14 @@ exports.unassignDriver = async (req, res) => {
       }
       await driver.save();
 
-      // Trigger status change Pusher event
       await triggerDriverStatusChange(restaurantId, {
         driverId: driver._id.toString(),
         status: driver.status,
       });
     }
 
-    // Trigger Pusher events to update maps in real-time
     const pusher = require("../../../config/pusher");
     if (pusher.pusherInstance) {
-      // 1. Tell order tracking map driver is unassigned
       pusher.pusherInstance.trigger(
         `private-order-${orderId}`,
         "delivery-unassigned",
@@ -1270,7 +1241,6 @@ exports.unassignDriver = async (req, res) => {
           orderId,
         },
       );
-      // 2. Tell branch dashboard to re-fetch/update
       pusher.pusherInstance.trigger(
         `private-restaurant-${restaurantId}`,
         "delivery-assigned",
@@ -1291,13 +1261,11 @@ exports.unassignDriver = async (req, res) => {
 
 /**
  * POST: Complete driver assignment manually from branch dashboard
- * Params: driverId
  */
 exports.completeActiveAssignment = async (req, res) => {
   try {
     const { driverId } = req.params;
 
-    // Find all delivered (returning) assignments for this driver
     await DeliveryAssignment.updateMany(
       { driverId, status: "delivered" },
       { $set: { status: "completed", completedAt: new Date() } },
@@ -1309,7 +1277,6 @@ exports.completeActiveAssignment = async (req, res) => {
       driver.activeOrderIds = [];
       await driver.save();
 
-      // Trigger status change Pusher event
       await triggerDriverStatusChange(driver.restaurantId || "default", {
         driverId: driver._id.toString(),
         status: "available",
@@ -1326,14 +1293,12 @@ exports.completeActiveAssignment = async (req, res) => {
 
 /**
  * GET: Fetch drivers for Driver Drop Dashboard for a given date
- * Query params: date (YYYY-MM-DD), branchId / restaurantId
  */
 exports.getDriverDropDrivers = async (req, res) => {
   try {
     const restaurantId = getRestaurantIdFromReq(req);
     const dateStr = req.query.date || new Date().toISOString().split("T")[0];
 
-    // Find all driver employees for this branch
     const employees = await Employee.find({
       branchId: restaurantId,
       $or: [{ role: "driver" }, { driverRef: { $exists: true, $ne: null } }],
@@ -1343,7 +1308,6 @@ exports.getDriverDropDrivers = async (req, res) => {
 
     const employeeIds = employees.map((e) => e._id);
 
-    // Find attendance records for selected date
     const attendances = await Attendance.find({
       branchId: restaurantId,
       employeeId: { $in: employeeIds },
@@ -1356,7 +1320,6 @@ exports.getDriverDropDrivers = async (req, res) => {
       attendances.map((a) => a.employeeId.toString()),
     );
 
-    // Find existing settlements for this date
     const settlements = await DriverDropSettlement.find({
       branchId: restaurantId,
       date: dateStr,
@@ -1446,7 +1409,6 @@ exports.getDriverDropDrivers = async (req, res) => {
 
 /**
  * GET: Fetch live delivered orders breakdown & totals for a specific driver and date
- * Query params: driverId, date, branchId / restaurantId
  */
 exports.getDriverDropSummary = async (req, res) => {
   try {
@@ -1458,11 +1420,10 @@ exports.getDriverDropSummary = async (req, res) => {
         .json({ success: false, message: "driverId is required" });
     }
 
-    const targetDate = date || new Date().toISOString().split("T")[0];
-    const startOfDay = new Date(`${targetDate}T00:00:00.000Z`);
-    const endOfDay = new Date(`${targetDate}T23:59:59.999Z`);
+    const targetDate = date || getLocalDateStr();
+    const startOfDay = getLocalStartOfDay(targetDate);
+    const endOfDay = getLocalEndOfDay(targetDate);
 
-    // Check if already settled
     const existingSettlement = await DriverDropSettlement.findOne({
       branchId: restaurantId,
       driverId,
@@ -1484,7 +1445,6 @@ exports.getDriverDropSummary = async (req, res) => {
       });
     }
 
-    // Find all delivery assignments for this driver on the date
     const assignments = await DeliveryAssignment.find({
       driverId,
       createdAt: { $gte: startOfDay, $lte: endOfDay },
@@ -1492,13 +1452,11 @@ exports.getDriverDropSummary = async (req, res) => {
       .populate("orderId")
       .lean();
 
-    // Map orders
     const orders = assignments
       .filter((a) => a.orderId)
       .map((a) => {
         const order = a.orderId;
 
-        // Payment Detail code: PP (Prepaid online), TM (Terminal card), CS (Cash)
         let pd = "CS";
         if (
           ["online", "doordash", "skip", "ubereats"].includes(order.orderSource) ||
@@ -1559,7 +1517,6 @@ exports.getDriverDropSummary = async (req, res) => {
 
 /**
  * POST: Submit Driver Drop Settlement
- * Body: { branchId, driverId, date, terminalSales, terminalTips, cashSales, additionalCommission, additionalReason, settledBy }
  */
 exports.settleDriverDrop = async (req, res) => {
   try {
@@ -1588,8 +1545,9 @@ exports.settleDriverDrop = async (req, res) => {
         .json({ success: false, message: "Driver not found." });
     }
 
-    const startOfDay = new Date(`${date}T00:00:00.000Z`);
-    const endOfDay = new Date(`${date}T23:59:59.999Z`);
+    const targetDate = date || getLocalDateStr();
+    const startOfDay = getLocalStartOfDay(targetDate);
+    const endOfDay = getLocalEndOfDay(targetDate);
 
     const assignments = await DeliveryAssignment.find({
       driverId,
@@ -1719,8 +1677,7 @@ exports.settleDriverDrop = async (req, res) => {
 };
 
 /**
- * GET: Download Driver Drop PDF Receipt (sales report, commission slip, or both)
- * Query params: driverId, date, type (sales | commission | both)
+ * GET: Download Driver Drop PDF Receipt
  */
 exports.downloadDriverDropPdf = async (req, res) => {
   try {
@@ -1746,8 +1703,9 @@ exports.downloadDriverDropPdf = async (req, res) => {
       date,
     }).lean();
 
-    const startOfDay = new Date(`${date}T00:00:00.000Z`);
-    const endOfDay = new Date(`${date}T23:59:59.999Z`);
+    const targetDate = date || getLocalDateStr();
+    const startOfDay = getLocalStartOfDay(targetDate);
+    const endOfDay = getLocalEndOfDay(targetDate);
 
     let orders = [];
     if (settlement && settlement.orders && settlement.orders.length > 0) {

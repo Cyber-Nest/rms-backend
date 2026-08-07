@@ -2,7 +2,6 @@ const Employee = require("../models/employee.model");
 const Driver = require("../../delivery/models/Driver.model");
 const Attendance = require("../models/attendance.model");
 
-// Helper to get local date string YYYY-MM-DD
 const getTodayDateStr = () => {
   const now = new Date();
   const year = now.getFullYear();
@@ -11,23 +10,22 @@ const getTodayDateStr = () => {
   return `${year}-${month}-${day}`;
 };
 
-// Generate next Employee ID for a branch: 001, 002, 003, etc.
 const generateNextEmployeeId = async (branchId) => {
-  const employees = await Employee.find({ branchId }).select("employeeId").lean();
-  let maxSeq = 0;
-  
-  employees.forEach((emp) => {
-    if (emp.employeeId) {
-      const seqStr = String(emp.employeeId).replace(/^EMP-?/i, "").trim();
-      const seq = parseInt(seqStr, 10);
-      if (!isNaN(seq) && seq > maxSeq) {
-        maxSeq = seq;
-      }
-    }
-  });
+  const lastEmp = await Employee.findOne({ branchId })
+    .select("employeeId")
+    .sort({ createdAt: -1 })
+    .lean();
 
-  const nextSeq = maxSeq + 1;
-  return String(nextSeq).padStart(3, "0");
+  let maxSeq = 0;
+  if (lastEmp && lastEmp.employeeId) {
+    const seqStr = String(lastEmp.employeeId).replace(/^EMP-?/i, "").trim();
+    const seq = parseInt(seqStr, 10);
+    if (!isNaN(seq)) {
+      maxSeq = seq;
+    }
+  }
+
+  return String(maxSeq + 1).padStart(3, "0");
 };
 
 exports.createEmployee = async (branchId, employeeData) => {
@@ -65,7 +63,6 @@ exports.createEmployee = async (branchId, employeeData) => {
 
   let driverRef = null;
 
-  // If role is driver, create a corresponding Driver entry
   if (role === "driver") {
     try {
       const existingDriver = await Driver.findOne({ driverId: employeeId });
@@ -96,7 +93,7 @@ exports.createEmployee = async (branchId, employeeData) => {
     phone: phone ? phone.trim() : "",
     address: address ? address.trim() : "",
     role,
-    pin: cleanPin, // Pre-save hook will hash this
+    pin: cleanPin,
     driverRef,
     ...(employeeData.permissions && typeof employeeData.permissions === "object"
       ? { permissions: employeeData.permissions }
@@ -105,7 +102,6 @@ exports.createEmployee = async (branchId, employeeData) => {
 
   await employee.save();
 
-  // Return without pin hash
   const result = employee.toObject();
   delete result.pin;
   return result;
@@ -202,10 +198,9 @@ exports.updateEmployee = async (branchId, id, updateData) => {
     if (!/^\d{4}$/.test(cleanPin)) {
       throw new Error("PIN must be exactly 4 digits");
     }
-    employee.pin = cleanPin; // Will be hashed in pre-save
+    employee.pin = cleanPin;
   }
 
-  // Handle role changes & driver sync
   if (updateData.role !== undefined && updateData.role !== employee.role) {
     const oldRole = employee.role;
     employee.role = updateData.role;
@@ -266,10 +261,8 @@ exports.deleteEmployee = async (branchId, id) => {
 };
 
 const VALID_PERMISSION_KEYS = [
-  // Separate route pages
   "pos", "kitchen", "reception_view", "delivery", "driver_drop",
   "vehicles", "customers", "employees", "menus", "setting",
-  // /employee/orders sub-tabs
   "dashboard", "orders", "orders_list", "sales_summary", "expense_payout", "reports",
   "item_sales", "hourly_sales", "cash_out_summary",
   "monthly_sales_summary", "failed_transaction", "refund_orders",
@@ -284,7 +277,6 @@ exports.updatePermissions = async (branchId, id, permissions) => {
   const employee = await Employee.findOne({ _id: id, branchId });
   if (!employee) throw new Error("Employee not found");
 
-  // Build $set payload — only accept known keys
   const $set = {};
   for (const key of VALID_PERMISSION_KEYS) {
     if (key in permissions) {
@@ -326,7 +318,6 @@ exports.verifyEmployeePin = async (branchId, employeeId, pin) => {
     throw new Error("Invalid 4-digit PIN");
   }
 
-  // Fetch today's attendance status for this employee
   const dateStr = getTodayDateStr();
   const attendance = await Attendance.findOne({
     branchId,

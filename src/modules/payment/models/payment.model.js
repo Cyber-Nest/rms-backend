@@ -15,6 +15,7 @@ const paymentSchema = new mongoose.Schema(
       enum: ["pending", "succeeded", "failed", "refunded"],
       default: "pending",
     },
+    branchId: { type: mongoose.Schema.Types.ObjectId, ref: "Branch", default: null, index: true },
     transactionId: { type: String, default: "" },
     cardBrand: { type: String, default: "" },
     cardFunding: { type: String, default: "" },
@@ -28,6 +29,7 @@ const paymentSchema = new mongoose.Schema(
 
 // Indexes for fast lookups
 paymentSchema.index({ orderId: 1 });
+paymentSchema.index({ branchId: 1, createdAt: -1 });
 paymentSchema.index({ createdAt: -1 });
 paymentSchema.index({ status: 1 });
 paymentSchema.index({ orderNumber: 1 });

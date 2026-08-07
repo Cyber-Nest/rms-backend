@@ -22,9 +22,9 @@ router.post("/branches/logout", branchController.logoutBranch);
 router.get("/branches/me", protectBranch, branchController.getMe);
 router.get("/branches/check-session", protectBranch, branchController.checkSession);
 router.get("/branches/settings", branchController.getBranchSettings);
-router.patch("/branches/settings", branchController.updateBranchSettings);
-router.put("/branches/profile", branchController.updateBranchProfile);
-router.patch("/branches/change-password", branchController.changePassword);
+router.patch("/branches/settings", protectBranch, branchController.updateBranchSettings);
+router.put("/branches/profile", protectBranch, branchController.updateBranchProfile);
+router.patch("/branches/change-password", protectBranch, branchController.changePassword);
 
 // ── Super Admin Branch Management Routes ──
 router.post("/branches", protectSuperAdmin, branchController.createBranch);

@@ -23,6 +23,11 @@ const orderItemSchema = new mongoose.Schema(
     name: { type: String, required: true },
     image: { type: String, default: "" },
     basePrice: { type: Number, required: true },
+    selectedSize: {
+      sizeCode: { type: String, default: "" },
+      sizeName: { type: String, default: "" },
+      price: { type: Number, default: 0 },
+    },
     selectedModifiers: { type: [selectedModifierSchema], default: [] },
     quantity: { type: Number, required: true, min: 1 },
     totalPrice: { type: Number, required: true },
@@ -173,11 +178,26 @@ const orderSchema = new mongoose.Schema(
         userName: String,
       },
     ],
+    businessDate: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
   },
   {
     timestamps: true,
   },
 );
+
+orderSchema.pre("save", function () {
+  if (this.orderTiming === "later" && this.scheduledAt) {
+    this.businessDate = new Date(this.scheduledAt);
+  } else if (this.createdAt) {
+    this.businessDate = new Date(this.createdAt);
+  } else {
+    this.businessDate = new Date();
+  }
+});
 
 orderSchema.statics.generateOrderNumber = async function (
   orderType,
@@ -190,25 +210,7 @@ orderSchema.statics.generateOrderNumber = async function (
   const dateString = getLocalDateStr(targetDate);
   const counterKey = `${branchId ? branchId.toString() : "main"}_${dateString}`;
 
-  // Get local day boundaries as UTC Date objects
-  const startOfDay = getLocalStartOfDay(dateString);
-  const endOfDay = getLocalEndOfDay(dateString);
-
-  const query = { createdAt: { $gte: startOfDay, $lte: endOfDay } };
-  if (branchId) {
-    query.branchId = branchId;
-  }
-
-  const countToday = await this.countDocuments(query);
-
-  if (countToday === 0) {
-    await OrderCounter.findOneAndUpdate(
-      { _id: counterKey },
-      { $set: { count: 0 } },
-      { upsert: true },
-    );
-  }
-
+  // Atomic increment with upsert — fast, no race conditions, zero locks
   const counter = await OrderCounter.findOneAndUpdate(
     { _id: counterKey },
     { $inc: { count: 1 } },
@@ -223,45 +225,21 @@ orderSchema.statics.previewNextOrderNumber = async function (
   orderType,
   branchId = null,
 ) {
-  // Get date string in local timezone
   const dateString = getLocalDateStr();
   const counterKey = `${branchId ? branchId.toString() : "main"}_${dateString}`;
 
-  // Get local day boundaries as UTC Date objects
-  const startOfDay = getLocalStartOfDay(dateString);
-  const endOfDay = getLocalEndOfDay(dateString);
-
-  const query = { createdAt: { $gte: startOfDay, $lte: endOfDay } };
-  if (branchId) {
-    query.branchId = branchId;
-  }
-
-  const countToday = await this.countDocuments(query);
-
-  if (countToday === 0) {
-    return "101";
-  }
-
-  const counter = await OrderCounter.findOne({ _id: counterKey });
+  const counter = await OrderCounter.findOne({ _id: counterKey }).lean();
   const currentCount = counter ? counter.count : 0;
   return String(currentCount + 101);
 };
 
-orderSchema.index({ createdAt: -1 });
-orderSchema.index({ status: 1 });
-orderSchema.index({ scheduledAt: 1 }, { sparse: true });
+orderSchema.index({ orderNumber: 1 });
+orderSchema.index({ businessDate: -1 });
+orderSchema.index({ branchId: 1, businessDate: -1 });
+orderSchema.index({ branchId: 1, status: 1, businessDate: -1 });
+orderSchema.index({ branchId: 1, status: 1, kitchenCleared: 1 });
+orderSchema.index({ branchId: 1, status: 1, receptionCompleted: 1 });
 orderSchema.index({ "customer.phone": 1 }, { sparse: true });
 orderSchema.index({ "customer.email": 1 }, { sparse: true });
-
-orderSchema.index({ branchId: 1, createdAt: -1 });
-orderSchema.index({ branchId: 1, status: 1, createdAt: -1 });
-orderSchema.index({ branchId: 1, "customer.phone": 1, createdAt: -1 });
-orderSchema.index({ branchId: 1, "customer.email": 1, createdAt: -1 });
-orderSchema.index({ orderTiming: 1, createdAt: -1 });
-orderSchema.index({ orderTiming: 1, scheduledAt: -1 });
-orderSchema.index({ status: 1, createdAt: -1 });
-orderSchema.index({ paymentStatus: 1 });
-orderSchema.index({ receptionCompleted: 1, status: 1 });
-orderSchema.index({ kitchenCleared: 1, status: 1 });
 
 module.exports = mongoose.model("Order", orderSchema);
