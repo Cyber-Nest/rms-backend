@@ -7,6 +7,7 @@ const Attendance = require("../../employee/models/attendance.model");
 const Employee = require("../../employee/models/employee.model");
 const driverDropPdfService = require("../services/driverDropPdf.service");
 const logger = require("../../../shared/utils/logger");
+const { generateSignedQrPayload, verifyQrPayload } = require("../../../shared/utils/qrSigning");
 
 const {
   getLocalStartOfDay,
@@ -81,7 +82,7 @@ exports.pusherAuth = async (req, res) => {
     if (token) {
       try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        branchId = decoded.branchId || decoded._id;
+        branchId = decoded.branchId || decoded.restaurantId || decoded._id;
         isSuperAdmin = decoded.role === "super_admin";
       } catch (e) {}
     }
@@ -844,6 +845,17 @@ exports.driverLogin = async (req, res) => {
       status: recoveredStatus,
     });
 
+    // Generate JWT token for driver session
+    const driverToken = jwt.sign(
+      {
+        _id: driver._id.toString(),
+        driverId: driver.driverId,
+        restaurantId: driver.restaurantId,
+      },
+      JWT_SECRET,
+      { expiresIn: "12h" }
+    );
+
     res.status(200).json({
       success: true,
       data: {
@@ -855,6 +867,7 @@ exports.driverLogin = async (req, res) => {
         status: recoveredStatus,
         restaurantId: driver.restaurantId,
         assignedVehicle,
+        token: driverToken,
       },
     });
   } catch (error) {
@@ -868,6 +881,14 @@ exports.driverLogin = async (req, res) => {
 exports.getDriverAssignments = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Ownership check: driver can only view their own assignments
+    if (req.driver && String(req.driver._id) !== String(id)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own assignments.",
+      });
+    }
 
     const assignments = await DeliveryAssignment.find({
       driverId: id,
@@ -915,6 +936,17 @@ exports.markDelivered = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Assignment not found." });
+    }
+
+    // Ownership check:
+    if (
+      req.driver &&
+      String(req.driver._id) !== String(assignment.driverId)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only update your own deliveries.",
+      });
     }
 
     assignment.status = "delivered";
@@ -987,6 +1019,16 @@ exports.markCompleted = async (req, res) => {
         .json({ success: false, message: "Assignment not found." });
     }
 
+    if (
+      req.driver &&
+      String(req.driver._id) !== String(assignment.driverId)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only complete your own deliveries.",
+      });
+    }
+
     assignment.status = "completed";
     assignment.completedAt = new Date();
     await assignment.save();
@@ -1028,6 +1070,13 @@ exports.updateDriverStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
+    if (req.driver && String(req.driver._id) !== String(id)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only update your own status.",
+      });
+    }
+
     if (!["available", "offline"].includes(status)) {
       return res.status(400).json({
         success: false,
@@ -1064,6 +1113,14 @@ exports.updateDriverStatus = async (req, res) => {
 exports.getDriverById = async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (req.driver && String(req.driver._id) !== String(id)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only view your own profile.",
+      });
+    }
+
     const driver = await Driver.findById(id)
       .populate("assignedVehicleId")
       .lean();
@@ -1765,6 +1822,124 @@ exports.downloadDriverDropPdf = async (req, res) => {
       { driver, date, type, settlement, orders, branchId: restaurantId },
       res
     );
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * POST: Verify a signed Store QR token 
+ */
+exports.verifyStoreQr = async (req, res) => {
+  try {
+    const { qrToken } = req.body;
+    if (!qrToken) {
+      return res.status(400).json({
+        success: false,
+        message: "QR token is required.",
+      });
+    }
+
+    // Try to verify as signed HMAC token
+    try {
+      const payload = verifyQrPayload(qrToken);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          branchId: payload.branchId,
+          branchName: payload.branchName,
+          branchCode: payload.branchCode,
+          apiUrl: payload.apiUrl || "",
+          verified: true,
+          method: "signed",
+        },
+      });
+    } catch (signedError) {
+      // Fallback: Try to parse as plain JSON (backward compatibility for old QR codes)
+      try {
+        let parsed = null;
+        const trimmed = qrToken.trim();
+        if (trimmed.startsWith("{")) {
+          parsed = JSON.parse(trimmed);
+        } else {
+          parsed = JSON.parse(decodeURIComponent(trimmed));
+        }
+
+        if (parsed && (parsed.type === "BRANCH_PAIRING_QR" || parsed.branchId)) {
+          logger.warn(
+            `[QR] Plain JSON QR used for branch ${parsed.branchId} — consider upgrading to signed QR`
+          );
+          return res.status(200).json({
+            success: true,
+            data: {
+              branchId: parsed.branchId,
+              branchName: parsed.branchName || parsed.name || "Restaurant Branch",
+              branchCode: parsed.branchCode || parsed.code || "STORE",
+              apiUrl: parsed.apiUrl || "",
+              verified: true,
+              method: "legacy_plain",
+            },
+          });
+        }
+      } catch (plainError) {
+        // Both methods failed
+      }
+
+      return res.status(403).json({
+        success: false,
+        code: "INVALID_QR",
+        message: "Invalid or tampered QR code. Please scan a valid Restaurant Store QR code.",
+      });
+    }
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+/**
+ * GET: Generate a signed QR token for a branch 
+ */
+exports.generateBranchQrToken = async (req, res) => {
+  try {
+    const branchId = req.params.branchId || req.activeBranchId;
+    if (!branchId) {
+      return res.status(400).json({
+        success: false,
+        message: "Branch ID is required.",
+      });
+    }
+
+    const Branch = require("../../company/models/branch.model");
+    const branch = await Branch.findById(branchId).select("name code").lean();
+    if (!branch) {
+      return res.status(404).json({
+        success: false,
+        message: "Branch not found.",
+      });
+    }
+
+    const apiUrl =
+      process.env.API_PUBLIC_URL ||
+      `${req.protocol}://${req.get("host")}/api`;
+
+    const signedToken = generateSignedQrPayload({
+      branchId: String(branchId),
+      branchName: branch.name,
+      branchCode: branch.code,
+      apiUrl,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        signedToken,
+        branchId: String(branchId),
+        branchName: branch.name,
+        branchCode: branch.code,
+        apiUrl,
+      },
+    });
   } catch (error) {
     handleError(res, error, 500);
   }

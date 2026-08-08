@@ -11,25 +11,33 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement
     const formattedDate = new Date(date).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
     const formattedTime = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-    // Calculations
-    const totalOrders = settlement ? settlement.totalOrders : orders.length;
-    const totalCancels = 0;
-    const totalSales = settlement ? settlement.totalSales : orders.reduce((s, o) => s + (o.total || 0), 0);
-    const prepaidSales = settlement ? settlement.prepaidSales : orders.filter((o) => o.pd === "PP").reduce((s, o) => s + (o.total || 0), 0);
-    const prepaidTips = settlement ? settlement.prepaidTips : orders.reduce((s, o) => s + (o.prepaidTip || 0), 0);
-    const totalNewSales = settlement ? settlement.totalNewSales : Math.max(0, totalSales - prepaidSales - prepaidTips);
-    const terminalSales = settlement ? settlement.terminalSales : 0;
-    const terminalTips = settlement ? settlement.terminalTips : 0;
-    const cashSales = settlement ? settlement.cashSales : 0;
-    const saleDue = settlement ? settlement.saleDue : (totalNewSales - terminalSales - terminalTips - cashSales);
+    // Calculations (use settlement record if present, otherwise compute dynamically from orders list)
+    const totalOrders = settlement?.totalOrders ?? orders.length;
+    const totalCancels = settlement?.totalCancels ?? 0;
+    const totalSales = settlement?.totalSales ?? orders.reduce((s, o) => s + (o.total || 0), 0);
 
-    const driverBaseCommission = settlement ? settlement.driverBaseCommission : totalOrders * 6.0;
-    const additionalCommission = settlement ? settlement.additionalCommission : 0;
-    const additionalReason = settlement ? settlement.additionalReason || "" : "";
-    const driverTotalCommission = settlement ? settlement.driverTotalCommission : driverBaseCommission + additionalCommission;
-    const totalTipsEarned = settlement ? settlement.totalTipsEarned : prepaidTips + terminalTips;
-    const totalDriverEarning = settlement ? settlement.totalDriverEarning : driverTotalCommission + totalTipsEarned;
-    const totalCommissionDue = settlement ? settlement.totalCommissionDue : driverTotalCommission;
+    const calcPrepaidSales = orders.filter((o) => o.pd === "PP").reduce((s, o) => s + (o.total || 0), 0);
+    const calcPrepaidTips = orders.reduce((s, o) => s + (o.prepaidTip || 0), 0);
+    const calcTerminalSales = orders.filter((o) => o.pd === "TM").reduce((s, o) => s + (o.total || 0), 0);
+    const calcTerminalTips = orders.reduce((s, o) => s + (o.terminalTip || 0), 0);
+    const calcCashSales = orders.filter((o) => o.pd === "CS").reduce((s, o) => s + (o.total || 0), 0);
+
+    const prepaidSales = settlement?.prepaidSales ?? calcPrepaidSales;
+    const prepaidTips = settlement?.prepaidTips ?? calcPrepaidTips;
+    const totalNewSales = settlement?.totalNewSales ?? Math.max(0, totalSales - prepaidSales - prepaidTips);
+
+    const terminalSales = settlement?.terminalSales ?? calcTerminalSales;
+    const terminalTips = settlement?.terminalTips ?? calcTerminalTips;
+    const cashSales = settlement?.cashSales ?? calcCashSales;
+    const saleDue = settlement?.saleDue ?? Math.max(0, totalNewSales - terminalSales - terminalTips - cashSales);
+
+    const driverBaseCommission = settlement?.driverBaseCommission ?? (totalOrders * 6.0);
+    const additionalCommission = settlement?.additionalCommission ?? 0;
+    const additionalReason = settlement?.additionalReason || "";
+    const driverTotalCommission = settlement?.driverTotalCommission ?? (driverBaseCommission + additionalCommission);
+    const totalTipsEarned = settlement?.totalTipsEarned ?? (prepaidTips + terminalTips);
+    const totalDriverEarning = settlement?.totalDriverEarning ?? (driverTotalCommission + totalTipsEarned);
+    const totalCommissionDue = settlement?.totalCommissionDue ?? driverTotalCommission;
 
     // Height based on type
     const docHeight = type === "both" ? 1000 : 550;

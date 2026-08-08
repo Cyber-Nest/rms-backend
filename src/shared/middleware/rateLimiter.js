@@ -59,5 +59,10 @@ module.exports = {
   createRateLimiter,
   publicOrderLimiter: createRateLimiter({ windowMs: 60 * 1000, max: 30, message: "Order rate limit exceeded. Please wait a minute." }),
   authLimiter: createRateLimiter({ windowMs: 60 * 1000, max: 15, message: "Login rate limit exceeded. Please wait a minute." }),
+  driverLoginLimiter: createRateLimiter({
+    windowMs: 5 * 60 * 1000, //5 min  
+    max: 5, // 5 attempts
+    message: "Too many login attempts. Account temporarily locked. Try again in 5 minutes.",
+  }),
   generalLimiter: createRateLimiter({ windowMs: 60 * 1000, max: 200 }),
 };

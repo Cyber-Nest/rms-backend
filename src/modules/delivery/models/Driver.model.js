@@ -56,7 +56,7 @@ const driverSchema = new mongoose.Schema(
   },
 );
 
-driverSchema.index({ driverId: 1 }, { unique: true });
+driverSchema.index({ restaurantId: 1, driverId: 1 }, { unique: true });
 driverSchema.index({ restaurantId: 1, status: 1 });
 
 driverSchema.pre("save", async function () {
