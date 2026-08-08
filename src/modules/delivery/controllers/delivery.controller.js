@@ -528,7 +528,11 @@ exports.assignDriver = async (req, res) => {
       restaurantId: driver.restaurantId,
     });
 
-    driver.status = "on-delivery";
+    if (driver.isDutyOnline) {
+      driver.status = "on-delivery";
+    } else {
+      driver.status = "offline";
+    }
     driver.activeOrderIds.push(orderId);
     await driver.save();
 
@@ -1084,24 +1088,32 @@ exports.updateDriverStatus = async (req, res) => {
       });
     }
 
-    const driver = await Driver.findByIdAndUpdate(
-      id,
-      { status, isDutyOnline: status === "available" },
-      { new: true },
-    ).lean();
-
-    if (!driver) {
+    const existingDriver = await Driver.findById(id);
+    if (!existingDriver) {
       return res
         .status(404)
         .json({ success: false, message: "Driver not found." });
     }
 
-    await triggerDriverStatusChange(driver.restaurantId, {
-      driverId: driver._id.toString(),
-      status,
+    let targetStatus = status;
+    let targetDutyOnline = status === "available";
+
+    if (status === "available" && existingDriver.activeOrderIds && existingDriver.activeOrderIds.length > 0) {
+      targetStatus = "on-delivery";
+      targetDutyOnline = true;
+    }
+
+    existingDriver.status = targetStatus;
+    existingDriver.isDutyOnline = targetDutyOnline;
+    await existingDriver.save();
+
+    await triggerDriverStatusChange(existingDriver.restaurantId, {
+      driverId: existingDriver._id.toString(),
+      status: targetStatus,
+      isDutyOnline: targetDutyOnline,
     });
 
-    res.status(200).json({ success: true, data: driver });
+    res.status(200).json({ success: true, data: existingDriver });
   } catch (error) {
     handleError(res, error, 500);
   }
@@ -1229,6 +1241,8 @@ exports.trackDelivery = async (req, res) => {
               name: driver.name,
               color: driver.color,
               phone: driver.phone,
+              status: driver.status,
+              isDutyOnline: Boolean(driver.isDutyOnline),
             }
           : null,
         vehicle: vehicle
