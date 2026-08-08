@@ -6,17 +6,17 @@ const logger = require('../../../shared/utils/logger');
 // Dynamic import to prevent circular dependency
 const getOrderService = () => require('../../order/services/order.service');
 
-let cachedPOSMenuFeed = null;
+const posMenuCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 const clearPOSMenuCache = () => {
-  cachedPOSMenuFeed = null;
+  posMenuCache.clear();
   try {
     getOrderService().clearProductLookupCache();
   } catch (err) {
     logger.warn(`Could not clear product lookup cache: ${err.message}`);
   }
 };
-
-
 
 exports.getAllCategories = async () => {
   try {
@@ -71,8 +71,6 @@ exports.deleteCategory = async (id) => {
   }
 };
 
-
-
 exports.getAllModifierGroups = async () => {
   try {
     return await ModifierGroup.find().populate('options.modifierGroups').sort({ createdAt: -1 }).lean();
@@ -120,8 +118,6 @@ exports.deleteModifierGroup = async (id) => {
     throw error;
   }
 };
-
-
 
 exports.getAllProducts = async (query = {}) => {
   try {
@@ -316,8 +312,6 @@ exports.deleteProduct = async (id) => {
   }
 };
 
-
-
 exports.toggleCategoryBranchVisibility = async (categoryId, branchId, isHidden) => {
   try {
     const update = isHidden
@@ -356,8 +350,10 @@ exports.toggleProductBranchVisibility = async (productId, branchId, isHidden) =>
 
 exports.getPOSMenuFeed = async (branchId = null) => {
   try {
-    if (cachedPOSMenuFeed && !branchId) {
-      return cachedPOSMenuFeed;
+    const cacheKey = branchId ? String(branchId) : "global";
+    const cached = posMenuCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+      return cached.feed;
     }
 
     const categoryFilter = { isActive: true };
@@ -410,6 +406,17 @@ exports.getPOSMenuFeed = async (branchId = null) => {
           isPopular: prod.isPopular,
           kitchenLabel: prod.kitchenLabel || 'chicken',
           itemType: prod.itemType,
+          hasVariants: !!prod.hasVariants,
+          variants: (prod.variants || []).map(v => ({
+            sizeCode: v.sizeCode,
+            sizeName: v.sizeName,
+            price: v.price,
+            isDefault: !!v.isDefault
+          })),
+          includedToppings: (prod.includedToppings || []).map(it => ({
+            groupId: it.groupId ? it.groupId.toHexString() : '',
+            optionId: it.optionId ? it.optionId.toHexString() : ''
+          })),
           isOutOfStock: !!isOutOfStockForBranch,
           disabledBranches: prod.disabledBranches || [],
           outOfStockBranches: prod.outOfStockBranches || [],
@@ -426,6 +433,11 @@ exports.getPOSMenuFeed = async (branchId = null) => {
             image: opt.image,
             price: opt.price,
             isDefault: opt.isDefault,
+            pricesPerSize: (opt.pricesPerSize || []).map(p => ({
+              sizeCode: p.sizeCode,
+              price: p.price
+            })),
+            availableForSizes: opt.availableForSizes || [],
             modifierGroups: opt.modifierGroups ? opt.modifierGroups.map(subG => ({
               id: subG._id.toHexString(),
               name: subG.name,
@@ -438,7 +450,12 @@ exports.getPOSMenuFeed = async (branchId = null) => {
                 name: subOpt.name,
                 image: subOpt.image,
                 price: subOpt.price,
-                isDefault: subOpt.isDefault
+                isDefault: subOpt.isDefault,
+                pricesPerSize: (subOpt.pricesPerSize || []).map(sp => ({
+                  sizeCode: sp.sizeCode,
+                  price: sp.price
+                })),
+                availableForSizes: subOpt.availableForSizes || []
               }))
             })) : []
           }))
@@ -447,17 +464,16 @@ exports.getPOSMenuFeed = async (branchId = null) => {
       })
     };
 
-    if (!branchId) {
-      cachedPOSMenuFeed = feed;
-    }
+    posMenuCache.set(cacheKey, {
+      feed,
+      timestamp: Date.now(),
+    });
     return feed;
   } catch (error) {
     logger.error(`Menu Service Error: getPOSMenuFeed - ${error.message}`);
     throw error;
   }
 };
-
-
 
 exports.uploadImageToCloudinary = (fileBuffer) => {
   return new Promise((resolve, reject) => {
@@ -481,7 +497,6 @@ exports.uploadImageToCloudinary = (fileBuffer) => {
     uploadStream.end(fileBuffer);
   });
 };
-
 
 const getPublicIdFromUrl = (url) => {
   try {

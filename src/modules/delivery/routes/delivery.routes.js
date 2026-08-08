@@ -1,48 +1,44 @@
 const express = require("express");
 const router = express.Router();
 const deliveryController = require("../controllers/delivery.controller");
+const protectBranch = require("../../../shared/middleware/protectBranch");
+const enforceBranch = require("../../../shared/middleware/enforceBranch");
+const protectDriver = require("../../../shared/middleware/protectDriver");
+const { driverLoginLimiter } = require("../../../shared/middleware/rateLimiter");
 
-// Pusher Auth Route
+// ── Public Routes (Pusher auth, Customer tracking, Driver App) ──
 router.post("/auth", deliveryController.pusherAuth);
-
-//Branch Dashboard
-router.get("/orders", deliveryController.getDeliveryOrders);
-router.get("/drivers", deliveryController.getDrivers);
-router.get("/vehicles", deliveryController.getVehicles);
-router.post("/vehicles", deliveryController.createVehicle);
-router.put("/vehicles/:id", deliveryController.updateVehicle);
-router.delete("/vehicles/:id", deliveryController.deleteVehicle);
-router.post("/assign", deliveryController.assignDriver);
-router.post("/unassign", deliveryController.unassignDriver);
-router.post("/vehicles/assign", deliveryController.assignVehicle);
-router.delete(
-  "/vehicles/unassign/:driverId",
-  deliveryController.unassignVehicle,
-);
-router.post(
-  "/driver/:driverId/complete-active",
-  deliveryController.completeActiveAssignment,
-);
-
-// Driver Drop Routes
-router.get("/driver-drop/drivers", deliveryController.getDriverDropDrivers);
-router.get("/driver-drop/summary", deliveryController.getDriverDropSummary);
-router.post("/driver-drop/settle", deliveryController.settleDriverDrop);
-router.get("/driver-drop/receipt/pdf", deliveryController.downloadDriverDropPdf);
-
-//Driver side
-router.post("/driver/login", deliveryController.driverLogin);
-router.get("/driver/:id", deliveryController.getDriverById);
-router.get("/driver/:id/assignments", deliveryController.getDriverAssignments);
-router.patch("/driver/deliver/:assignmentId", deliveryController.markDelivered);
-router.patch(
-  "/driver/complete/:assignmentId",
-  deliveryController.markCompleted,
-);
-router.patch("/driver/:id/status", deliveryController.updateDriverStatus);
-
-//User Tracking Route
 router.get("/track/:orderId", deliveryController.trackDelivery);
 
-module.exports = router;
+// Driver App Routes
+router.post("/driver/login", driverLoginLimiter, deliveryController.driverLogin);
+router.get("/driver/:id", protectDriver, deliveryController.getDriverById);
+router.get("/driver/:id/assignments", protectDriver, deliveryController.getDriverAssignments);
+router.patch("/driver/deliver/:assignmentId", protectDriver, deliveryController.markDelivered);
+router.patch("/driver/complete/:assignmentId", protectDriver, deliveryController.markCompleted);
+router.patch("/driver/:id/status", protectDriver, deliveryController.updateDriverStatus);
+
+// ── Branch Dashboard Protected Routes (protectBranch + enforceBranch) ──
+router.get("/orders", protectBranch, enforceBranch, deliveryController.getDeliveryOrders);
+router.get("/drivers", protectBranch, enforceBranch, deliveryController.getDrivers);
+router.get("/vehicles", protectBranch, enforceBranch, deliveryController.getVehicles);
+router.post("/vehicles", protectBranch, enforceBranch, deliveryController.createVehicle);
+router.put("/vehicles/:id", protectBranch, enforceBranch, deliveryController.updateVehicle);
+router.delete("/vehicles/:id", protectBranch, enforceBranch, deliveryController.deleteVehicle);
+router.post("/assign", protectBranch, enforceBranch, deliveryController.assignDriver);
+router.post("/unassign", protectBranch, enforceBranch, deliveryController.unassignDriver);
+router.post("/vehicles/assign", protectBranch, enforceBranch, deliveryController.assignVehicle);
+router.delete("/vehicles/unassign/:driverId", protectBranch, enforceBranch, deliveryController.unassignVehicle);
+router.post("/driver/:driverId/complete-active", protectBranch, enforceBranch, deliveryController.completeActiveAssignment);
+
+// Driver Drop Routes
+router.get("/driver-drop/drivers", protectBranch, enforceBranch, deliveryController.getDriverDropDrivers);
+router.get("/driver-drop/summary", protectBranch, enforceBranch, deliveryController.getDriverDropSummary);
+router.post("/driver-drop/settle", protectBranch, enforceBranch, deliveryController.settleDriverDrop);
+router.get("/driver-drop/receipt/pdf", protectBranch, enforceBranch, deliveryController.downloadDriverDropPdf);
+
+// ── QR Code Routes ──
+router.post("/driver/verify-qr", deliveryController.verifyStoreQr);
+router.get("/qr-token/:branchId", protectBranch, enforceBranch, deliveryController.generateBranchQrToken);
+
 module.exports = router;

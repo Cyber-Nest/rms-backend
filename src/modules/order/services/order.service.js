@@ -36,45 +36,27 @@ const buildDateFilter = (start, end, baseFilter = {}) => {
   ) {
     normBase.branchId = new mongoose.Types.ObjectId(normBase.branchId);
   }
+  const query = { ...normBase };
   if (start && end) {
-    return {
-      $or: [
-        {
-          ...normBase,
-          orderTiming: { $ne: "later" },
-          createdAt: { $gte: start, $lte: end },
-        },
-        {
-          ...normBase,
-          orderTiming: "later",
-          scheduledAt: { $gte: start, $lte: end },
-        },
-      ],
-    };
+    query.$or = [
+      { businessDate: { $gte: start, $lte: end } },
+      { businessDate: { $exists: false }, createdAt: { $gte: start, $lte: end } },
+      { businessDate: null, createdAt: { $gte: start, $lte: end } },
+    ];
   } else if (start) {
-    return {
-      $or: [
-        {
-          ...normBase,
-          orderTiming: { $ne: "later" },
-          createdAt: { $gte: start },
-        },
-        { ...normBase, orderTiming: "later", scheduledAt: { $gte: start } },
-      ],
-    };
+    query.$or = [
+      { businessDate: { $gte: start } },
+      { businessDate: { $exists: false }, createdAt: { $gte: start } },
+      { businessDate: null, createdAt: { $gte: start } },
+    ];
   } else if (end) {
-    return {
-      $or: [
-        {
-          ...normBase,
-          orderTiming: { $ne: "later" },
-          createdAt: { $lte: end },
-        },
-        { ...normBase, orderTiming: "later", scheduledAt: { $lte: end } },
-      ],
-    };
+    query.$or = [
+      { businessDate: { $lte: end } },
+      { businessDate: { $exists: false }, createdAt: { $lte: end } },
+      { businessDate: null, createdAt: { $lte: end } },
+    ];
   }
-  return normBase;
+  return query;
 };
 
 let productLookupCache = null;
@@ -136,7 +118,6 @@ exports.createOrder = async (orderData) => {
       orderData.branchId || null,
     );
 
-    // If pay-later → paymentStatus = unpaid, no payments array needed
     let paymentStatus =
       orderData.paymentTiming === "pay-later" ? "unpaid" : "paid";
     let payments = orderData.payments || [];
@@ -147,7 +128,6 @@ exports.createOrder = async (orderData) => {
         throw new Error(
           "Stripe is not configured. STRIPE_SECRET_KEY is missing.",
         );
-      // Query Stripe
       paymentIntent = await stripe.paymentIntents.retrieve(
         orderData.paymentIntentId,
         {
@@ -160,7 +140,6 @@ exports.createOrder = async (orderData) => {
         );
       }
 
-      // Extract card brand, card type (funding), and last 4
       const pmObj = paymentIntent.payment_method || {};
       const cardDetails =
         pmObj.card ||
@@ -233,7 +212,6 @@ exports.createOrder = async (orderData) => {
 
     await order.save();
 
-    // Increment Promo Code usage if applied
     if (order.promoCode) {
       try {
         const promoService = require("../../promo/services/promo.service");
@@ -243,12 +221,10 @@ exports.createOrder = async (orderData) => {
       }
     }
 
-    // Trigger real-time notification to Kitchen via Pusher
     triggerNewOrder(order).catch((err) => {
       logger.error(`Error triggering real-time Pusher event: ${err.message}`);
     });
 
-    // Save Payment audit document in database
     if (paymentIntent) {
       const charge = paymentIntent.charges?.data[0] || {};
       const cardDetails = charge.payment_method_details?.card || {};
@@ -258,6 +234,7 @@ exports.createOrder = async (orderData) => {
 
       const paymentDoc = new Payment({
         orderId: order._id,
+        branchId: order.branchId || null,
         orderNumber: order.orderNumber,
         amount: order.total,
         paymentMethod: "stripe",
@@ -315,7 +292,6 @@ exports.getAllOrders = async (filters = {}) => {
       query.kitchenCleared = { $ne: true };
     }
 
-    // Date filter: single date or range (Local timezone boundaries)
     let start = null;
     let end = null;
     if (filters.startDate || filters.endDate) {
@@ -332,9 +308,9 @@ exports.getAllOrders = async (filters = {}) => {
 
     query = buildDateFilter(start, end, query);
 
-    // Server-side search filter
     if (filters.search) {
-      const searchRegex = new RegExp(filters.search.trim(), "i");
+      const escaped = filters.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const searchRegex = new RegExp(escaped, "i");
       const searchOr = [
         { orderNumber: searchRegex },
         { "customer.name": searchRegex },
@@ -382,7 +358,6 @@ exports.getAllOrders = async (filters = {}) => {
         },
       };
     } else {
-      // Non-paginated
       const orders = await Order.find(query)
         .select(selectFields)
         .sort({ createdAt: -1 })
@@ -428,7 +403,6 @@ exports.updateOrderStatus = async (
     const order = await Order.findById(id);
     if (!order) throw new Error("Order not found.");
 
-    // Handle updates when status is already matching
     if (order.status === status) {
       if (receptionCompleted !== undefined) {
         order.receptionCompleted = receptionCompleted;
@@ -443,7 +417,6 @@ exports.updateOrderStatus = async (
       }
       await order.save();
 
-      // Trigger real-time notification via Pusher
       triggerOrderUpdated(order).catch((err) => {
         logger.error(
           `Error triggering real-time update Pusher event: ${err.message}`,
@@ -470,7 +443,6 @@ exports.updateOrderStatus = async (
     order.statusHistory.push({ status, changedAt: new Date(), note, userName });
     await order.save();
 
-    // Trigger real-time notification via Pusher
     triggerOrderUpdated(order).catch((err) => {
       logger.error(
         `Error triggering real-time update Pusher event: ${err.message}`,
@@ -503,7 +475,6 @@ exports.kitchenClear = async (id, userName = "Manager") => {
       });
       await order.save();
 
-      // Trigger real-time notification via Pusher
       triggerOrderUpdated(order).catch((err) => {
         logger.error(
           `Error triggering real-time update Pusher event: ${err.message}`,
@@ -519,7 +490,7 @@ exports.kitchenClear = async (id, userName = "Manager") => {
   }
 };
 
-// ── Mark Order as Paid (Pay Later → Paid) ─────────────────────
+// ── Mark Order as Paid ─────────────────────
 exports.markOrderPaid = async (id, payments) => {
   try {
     const order = await Order.findById(id);
@@ -528,9 +499,9 @@ exports.markOrderPaid = async (id, payments) => {
     if (payments && payments.length > 0) {
       order.payments = [...(order.payments || []), ...payments];
 
-      // Batch insert Payment audit documents in DB
       const paymentDocs = payments.map((p) => ({
         orderId: order._id,
+        branchId: order.branchId || null,
         orderNumber: order.orderNumber,
         amount: p.amount,
         paymentMethod: p.method === "cash" ? "cash" : "card",
@@ -548,7 +519,7 @@ exports.markOrderPaid = async (id, payments) => {
       order.paymentStatus = "paid";
       order.paymentTiming = "pay-now";
     } else {
-      order.paymentStatus = "unpaid"; // still partially unpaid
+      order.paymentStatus = "unpaid";
     }
 
     await order.save();
@@ -578,7 +549,6 @@ exports.cancelOrder = async (id, { reason = "", userName = "Manager" } = {}) => 
       { new: true },
     );
     if (!order) {
-      // Check if order exists to give specific error
       const exists = await Order.findById(id).select("status").lean();
       if (!exists) throw new Error("Order not found.");
       throw new Error(`Order is already ${exists.status}.`);
@@ -602,7 +572,6 @@ exports.refundOrder = async (id, { reason = "", userName = "Manager" } = {}) => 
     const order = await Order.findById(id);
     if (!order) throw new Error("Order not found.");
 
-    // Strict Check: POS Orders Only
     const isPos =
       order.orderSource === "pos" ||
       order.placedBy === "POS SYSTEM" ||
@@ -634,7 +603,6 @@ exports.refundOrder = async (id, { reason = "", userName = "Manager" } = {}) => 
 
     await order.save();
 
-    // Real-time update via Pusher
     triggerOrderUpdated(order).catch((err) => {
       logger.error(`Error triggering order refund Pusher event: ${err.message}`);
     });
@@ -701,7 +669,6 @@ exports.updateOrderItems = async (id, updateData) => {
     if (updateData.total !== undefined) {
       order.total = updateData.total;
 
-      // Recalculate payment status based on total and paid amounts
       const paymentsTotal = order.payments
         ? order.payments.reduce((sum, p) => sum + p.amount, 0)
         : 0;
@@ -750,7 +717,6 @@ exports.getSalesSummary = async (filters = {}) => {
     const dateFilter = buildDateFilter(start, end, baseFilter);
     Object.assign(query, dateFilter);
 
-    // Compute targetDateStr for deposit lookup
     let targetDateStr = "";
     if (filters.date) {
       targetDateStr = String(filters.date).split("T")[0];
@@ -760,7 +726,6 @@ exports.getSalesSummary = async (filters = {}) => {
       targetDateStr = getLocalDateStr();
     }
 
-    // ── Parallel fetch: orders + deposit + expenses + product lookups ──
     const expQuery = {};
     if (filters.branchId) {
       if (mongoose.Types.ObjectId.isValid(filters.branchId)) {
@@ -775,17 +740,6 @@ exports.getSalesSummary = async (filters = {}) => {
     if (start && end) {
       expQuery.expenseDate = { $gte: start, $lte: end };
     }
-
-    try {
-      const legacyExpenses = await Expense.find({ expenseDate: { $type: "date" } }).lean();
-      for (const exp of legacyExpenses) {
-        const dt = new Date(exp.expenseDate);
-        if (dt.getUTCHours() === 0 && dt.getUTCMinutes() === 0 && dt.getUTCSeconds() === 0) {
-          const updatedDate = new Date(dt.getTime() + 12 * 3600 * 1000);
-          await Expense.updateOne({ _id: exp._id }, { $set: { expenseDate: updatedDate } });
-        }
-      }
-    } catch (e) {}
 
     const dropQuery = {
       ...(filters.branchId ? { branchId: filters.branchId } : {}),
@@ -815,7 +769,6 @@ exports.getSalesSummary = async (filters = {}) => {
         .catch(() => []),
     ]);
 
-    //Completed & Cancelled & Refunded Orders
     let completedCount = 0;
     let completedTotal = 0;
     let cancelledCount = 0;
@@ -823,7 +776,6 @@ exports.getSalesSummary = async (filters = {}) => {
     let refundedCount = 0;
     let refundedTotal = 0;
 
-    // Financial sums for completed/valid orders
     let grossSubtotal = 0;
     let grossTax = 0;
     let grossDiscount = 0;
@@ -1119,20 +1071,23 @@ exports.getDashboardMetrics = async (filters = {}) => {
     const targetDateStr = filters.date || getLocalDateStr();
     const TIMEZONE = "America/Edmonton";
 
-    // Use local timezone day boundaries
     const todayStart = getLocalStartOfDay(targetDateStr);
     const todayEnd = getLocalEndOfDay(targetDateStr);
 
-    // Calculate 30 days ago in local timezone
     const targetDate = new Date(targetDateStr);
     const past30Date = new Date(targetDate);
     past30Date.setDate(past30Date.getDate() - 30);
     const past30DateStr = past30Date.toISOString().slice(0, 10);
     const past30DaysStart = getLocalStartOfDay(past30DateStr);
 
-    const branchIdFilter = filters.branchId
-      ? { branchId: new mongoose.Types.ObjectId(filters.branchId) }
-      : {};
+    const branchIdFilter = {};
+    if (filters.branchId) {
+      if (mongoose.Types.ObjectId.isValid(filters.branchId)) {
+        branchIdFilter.branchId = new mongoose.Types.ObjectId(filters.branchId);
+      } else {
+        branchIdFilter.branchId = filters.branchId;
+      }
+    }
 
     const dateMatchFilter = buildDateFilter(
       past30DaysStart,
@@ -1145,12 +1100,10 @@ exports.getDashboardMetrics = async (filters = {}) => {
       branchIdFilter,
     );
 
-    // Single aggregation for today's metrics, popular days, and popular food
     const [aggResult] = await Order.aggregate([
       { $match: dateMatchFilter },
       {
         $facet: {
-          // Today's orders: count + earnings
           todayMetrics: [
             { $match: todayDateFilter },
             {
@@ -1165,30 +1118,20 @@ exports.getDashboardMetrics = async (filters = {}) => {
               },
             },
           ],
-          // Popular days (30-day, non-cancelled)
           popularDays: [
             { $match: { status: { $ne: "cancelled" } } },
             {
-              $addFields: {
-                businessDate: {
-                  $cond: [
-                    { $eq: ["$orderTiming", "later"] },
-                    "$scheduledAt",
-                    "$createdAt",
-                  ],
-                },
-              },
-            },
-            {
               $group: {
                 _id: {
-                  $dayOfWeek: { date: "$businessDate", timezone: TIMEZONE },
+                  $dayOfWeek: {
+                    date: { $ifNull: ["$businessDate", { $ifNull: ["$createdAt", "$$NOW"] }] },
+                    timezone: TIMEZONE,
+                  },
                 },
                 count: { $sum: 1 },
               },
             },
           ],
-          // Popular food items (30-day, non-cancelled)
           popularFood: [
             { $match: { status: { $ne: "cancelled" } } },
             { $unwind: "$items" },
@@ -1201,28 +1144,38 @@ exports.getDashboardMetrics = async (filters = {}) => {
             { $sort: { value: -1 } },
             { $limit: 7 },
           ],
-          // Customer tracking — minimal fields for new/returning detection
           customerData: [
             { $match: todayDateFilter },
             {
-              $project: {
-                phone: "$customer.phone",
-                email: "$customer.email",
-                orderTiming: 1,
-                scheduledAt: 1,
-                createdAt: 1,
+              $match: {
+                $or: [
+                  { "customer.phone": { $exists: true, $nin: ["", null] } },
+                  { "customer.email": { $exists: true, $nin: ["", null] } },
+                ],
               },
             },
-          ],
-          // All customer earliest dates (30 days) for new/returning logic
-          allCustomerDates: [
             {
               $project: {
                 phone: "$customer.phone",
                 email: "$customer.email",
-                orderTiming: 1,
-                scheduledAt: 1,
-                createdAt: 1,
+                businessDate: 1,
+              },
+            },
+          ],
+          allCustomerDates: [
+            {
+              $match: {
+                $or: [
+                  { "customer.phone": { $exists: true, $nin: ["", null] } },
+                  { "customer.email": { $exists: true, $nin: ["", null] } },
+                ],
+              },
+            },
+            {
+              $project: {
+                phone: "$customer.phone",
+                email: "$customer.email",
+                businessDate: 1,
               },
             },
           ],
@@ -1230,13 +1183,11 @@ exports.getDashboardMetrics = async (filters = {}) => {
       },
     ]);
 
-    // Today metrics
     const todayMetrics = aggResult?.todayMetrics?.[0] || {
       totalOrders: 0,
       totalEarnings: 0,
     };
 
-    // Popular days
     const dayNames = [
       "Sunday",
       "Monday",
@@ -1250,7 +1201,6 @@ exports.getDashboardMetrics = async (filters = {}) => {
       .map((d) => ({ name: dayNames[d._id - 1] || "Unknown", value: d.count }))
       .filter((d) => d.value > 0);
 
-    // Popular food
     let popularFoodData = aggResult?.popularFood || [];
     if (popularFoodData.length > 6) {
       const top6 = popularFoodData.slice(0, 6);
@@ -1267,14 +1217,13 @@ exports.getDashboardMetrics = async (filters = {}) => {
       popularFoodData = [{ name: "No Menu Items Sold", value: 0 }];
     }
 
-    // New vs returning customers (lightweight JS — only today's orders)
     let newCustomers = 0;
     let returningCustomers = 0;
     const phoneToEarliestDate = new Map();
     const emailToEarliestDate = new Map();
 
     for (const order of aggResult?.allCustomerDates || []) {
-      const orderDate = getOrderBusinessDate(order);
+      const orderDate = order.businessDate ? new Date(order.businessDate) : new Date();
       const phone = order.phone?.trim();
       const email = order.email?.trim();
       if (phone) {
@@ -1330,8 +1279,6 @@ exports.getDashboardMetrics = async (filters = {}) => {
 
 exports.getUniqueCustomers = async (filters = {}) => {
   try {
-    const pipeline = [];
-
     let matchQuery = {
       "customer.name": { $exists: true, $nin: ["", null] },
       $or: [
@@ -1353,58 +1300,41 @@ exports.getUniqueCustomers = async (filters = {}) => {
     if (filters.date) {
       const start = getLocalStartOfDay(filters.date);
       const end = getLocalEndOfDay(filters.date);
-      matchQuery = buildDateFilter(start, end, {
-        "customer.name": { $exists: true, $nin: ["", null] },
-        $or: [
-          {
-            "customer.phone": {
-              $exists: true,
-              $nin: ["", "No phone", "No Phone", null],
-            },
-          },
-          {
-            "customer.email": {
-              $exists: true,
-              $nin: ["", "No email", "No Email", null],
-            },
-          },
-        ],
-      });
+      matchQuery = buildDateFilter(start, end, matchQuery);
     }
 
     if (filters.branchId) {
       matchQuery.branchId = new mongoose.Types.ObjectId(filters.branchId);
     }
 
-    pipeline.push({ $match: matchQuery });
-
-    pipeline.push({ $sort: { createdAt: -1 } });
-
-    pipeline.push({
-      $group: {
-        _id: {
-          $cond: [
-            {
-              $and: [
-                { $ifNull: ["$customer.phone", false] },
-                { $ne: ["$customer.phone", ""] },
-              ],
-            },
-            "$customer.phone",
-            "$customer.email",
-          ],
+    const pipeline = [
+      { $match: matchQuery },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: {
+            $cond: [
+              {
+                $and: [
+                  { $ifNull: ["$customer.phone", false] },
+                  { $ne: ["$customer.phone", ""] },
+                ],
+              },
+              "$customer.phone",
+              "$customer.email",
+            ],
+          },
+          firstName: { $first: "$customer.name" },
+          phone: { $first: "$customer.phone" },
+          email: { $first: "$customer.email" },
+          address: { $first: "$customer.address" },
+          postalCode: { $first: "$customer.postalCode" },
+          updatedDate: { $first: "$updatedAt" },
+          lastOrderDate: { $first: "$createdAt" },
         },
-        firstName: { $first: "$customer.name" },
-        phone: { $first: "$customer.phone" },
-        email: { $first: "$customer.email" },
-        address: { $first: "$customer.address" },
-        postalCode: { $first: "$customer.postalCode" },
-        updatedDate: { $first: "$updatedAt" },
-        lastOrderDate: { $first: "$createdAt" },
       },
-    });
-
-    pipeline.push({ $sort: { lastOrderDate: -1 } });
+      { $sort: { lastOrderDate: -1 } },
+    ];
 
     let results = await Order.aggregate(pipeline);
 
@@ -1448,7 +1378,6 @@ exports.getReportsSummary = async (filters = {}) => {
       : {};
     const dateFilter = buildDateFilter(start, end, baseFilter);
 
-    // Get cached product lookup maps
     const { categoryMap: productCategoryMap } = await getProductLookups();
 
     const pipeline = [];
@@ -1860,7 +1789,6 @@ exports.getReportsSummary = async (filters = {}) => {
 
 exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
   try {
-    // Get cached product lookup maps
     const { categoryMap: productCategoryMap, idMap: productIDMap } =
       await getProductLookups();
 
@@ -1947,7 +1875,6 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
       result.push(catData);
     }
 
-    // Sort categories by subtotal sales descending
     result.sort((a, b) => b.subtotalSales - a.subtotalSales);
 
     return result;
@@ -1957,7 +1884,6 @@ exports.getItemSalesSummary = async ({ startDate, endDate, branchId } = {}) => {
   }
 };
 
-// Get Hourly Sales Summary Report  ───────
 exports.getHourlySalesSummary = async ({
   startDate,
   endDate,
@@ -1980,7 +1906,6 @@ exports.getHourlySalesSummary = async ({
     }
     const matchQuery = buildDateFilter(start, end, baseFilter);
 
-    // Aggregation: group by hour in local timezone
     const hourlyData = await Order.aggregate([
       { $match: matchQuery },
       {
@@ -1988,13 +1913,7 @@ exports.getHourlySalesSummary = async ({
           total: 1,
           businessHour: {
             $hour: {
-              date: {
-                $cond: [
-                  { $eq: ["$orderTiming", "later"] },
-                  "$scheduledAt",
-                  "$createdAt",
-                ],
-              },
+              date: { $ifNull: ["$businessDate", "$createdAt"] },
               timezone: TIMEZONE,
             },
           },
@@ -2009,7 +1928,6 @@ exports.getHourlySalesSummary = async ({
       },
     ]);
 
-    // Build hour lookup map from aggregation results
     const hourMap = new Map();
     for (const row of hourlyData) {
       hourMap.set(row._id, {
@@ -2018,7 +1936,6 @@ exports.getHourlySalesSummary = async ({
       });
     }
 
-    // Define hourly slots dynamically for all 24 hours of the day
     const hourlySlots = [];
     for (let h = 0; h < 24; h++) {
       let label = "";
@@ -2041,7 +1958,6 @@ exports.getHourlySalesSummary = async ({
       });
     }
 
-    // Map aggregation results to slots
     for (const slot of hourlySlots) {
       const data = hourMap.get(slot.startHour);
       if (data) {
@@ -2059,7 +1975,6 @@ exports.getHourlySalesSummary = async ({
   }
 };
 
-// ── Get Monthly Sales Summary Report ───────
 exports.getMonthlySalesSummary = async ({
   startDate,
   endDate,
@@ -2072,7 +1987,6 @@ exports.getMonthlySalesSummary = async ({
       start = getLocalStartOfDay(startDate);
       end = getLocalEndOfDay(endDate);
     } else {
-      // Default to current month in local timezone
       const todayStr = getLocalDateStr();
       const parts = todayStr.split("-");
       const firstOfMonth = `${parts[0]}-${parts[1]}-01`;
@@ -2083,22 +1997,15 @@ exports.getMonthlySalesSummary = async ({
     const baseFilter = branchId ? { branchId } : {};
     const dateFilter = buildDateFilter(start, end, baseFilter);
 
-    //group all orders by business date with all needed metrics
     const [ordersByDayAgg, expensesRaw, depositsRaw] = await Promise.all([
       Order.aggregate([
         { $match: dateFilter },
         {
           $addFields: {
-            businessDate: {
+            businessDateStr: {
               $dateToString: {
                 format: "%Y-%m-%d",
-                date: {
-                  $cond: [
-                    { $eq: ["$orderTiming", "later"] },
-                    "$scheduledAt",
-                    "$createdAt",
-                  ],
-                },
+                date: { $ifNull: ["$businessDate", "$createdAt"] },
                 timezone: TIMEZONE,
               },
             },
@@ -2106,13 +2013,12 @@ exports.getMonthlySalesSummary = async ({
         },
         {
           $group: {
-            _id: { date: "$businessDate", status: "$status" },
+            _id: { date: "$businessDateStr", status: "$status" },
             count: { $sum: 1 },
             subtotal: { $sum: "$subtotal" },
             tax: { $sum: "$tax" },
             discount: { $sum: "$discount" },
             total: { $sum: "$total" },
-            // Payment breakdowns via conditional sums
             cashTotal: {
               $sum: {
                 $cond: [
@@ -2127,7 +2033,6 @@ exports.getMonthlySalesSummary = async ({
                 ],
               },
             },
-            // Order types
             takeoutTotal: {
               $sum: {
                 $cond: [
@@ -2186,7 +2091,6 @@ exports.getMonthlySalesSummary = async ({
                 ],
               },
             },
-            // Source breakdowns
             onlineTotal: {
               $sum: {
                 $cond: [
@@ -2215,7 +2119,6 @@ exports.getMonthlySalesSummary = async ({
                 ],
               },
             },
-            // Cancelled breakdowns
             paidCancelled: {
               $sum: {
                 $cond: [
@@ -2244,7 +2147,6 @@ exports.getMonthlySalesSummary = async ({
                 ],
               },
             },
-            // Payment details — flatten payments array and aggregate
             orders: {
               $push: {
                 total: "$total",
@@ -2272,8 +2174,7 @@ exports.getMonthlySalesSummary = async ({
       }).lean(),
     ]);
 
-    // Build date-keyed Maps
-    const dayDataMap = new Map(); // date -> { active: {...}, cancelled: {...} }
+    const dayDataMap = new Map();
 
     for (const row of ordersByDayAgg) {
       const dateStr = row._id.date;
@@ -2319,7 +2220,6 @@ exports.getMonthlySalesSummary = async ({
       }
     }
 
-    // Process payment & promo breakdowns per day from pushed orders
     for (const [, day] of dayDataMap) {
       let cashSales = 0,
         cardSales = 0,
@@ -2363,7 +2263,7 @@ exports.getMonthlySalesSummary = async ({
         count: p.count,
         totalDiscount: Math.round(p.totalDiscount * 100) / 100,
       }));
-      delete day.orders; // Free memory
+      delete day.orders;
     }
 
     const expenseMap = new Map();
@@ -2381,7 +2281,6 @@ exports.getMonthlySalesSummary = async ({
       depositMap.set(d.date, d);
     }
 
-    // Iterate day by day — now just Map lookups
     const result = [];
     const startDateStr = startDate || getLocalDateStr(start);
     const endDateStr = endDate || getLocalDateStr(end);

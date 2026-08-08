@@ -1,29 +1,36 @@
 const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/order.controller');
+const protectBranch = require('../../../shared/middleware/protectBranch');
+const enforceBranch = require('../../../shared/middleware/enforceBranch');
 
-router.post('/',              orderController.createOrder);
-router.get('/next-number',    orderController.getNextOrderNumber);
-router.get('/sales-summary',   orderController.getSalesSummary);
-router.get('/sales-summary/pdf', orderController.downloadSalesSummaryPdf);
-router.get('/reports-summary', orderController.getReportsSummary);
-router.get('/export-report',    orderController.exportReport);
-router.get('/item-sales-summary', orderController.getItemSalesSummary);
-router.get('/hourly-sales-summary', orderController.getHourlySalesSummary);
-router.get('/monthly-sales-summary', orderController.getMonthlySalesSummary);
-router.get('/dashboard-metrics', orderController.getDashboardMetrics);
-router.get('/customers', orderController.getUniqueCustomers);
-router.post('/sales-summary/deposit', orderController.saveDeposit);
-router.get('/',               orderController.getAllOrders);
-router.get('/:id',            orderController.getOrderById);
-router.get('/:id/pdf',        orderController.downloadReceiptPdf);
-router.patch('/:id/status',   orderController.updateOrderStatus);
-router.patch('/:id/kitchen-clear', orderController.kitchenClear);
-router.patch('/:id/due-time', orderController.updateOrderDueTime);
-router.patch('/:id/payment',  orderController.markOrderPaid);
-router.patch('/:id',          orderController.updateOrderItems);
-router.post('/:id/refund',     orderController.refundOrder);
-router.post('/:id/cancel',     orderController.cancelOrder);
-router.delete('/:id',         orderController.cancelOrder);
+// ── Public Order Creation Endpoint ──
+router.post('/', orderController.createOrder);
+
+// ── Static Branch Admin & POS Protected Routes (MUST BE BEFORE /:id) ──
+router.get('/next-number', protectBranch, enforceBranch, orderController.getNextOrderNumber);
+router.get('/sales-summary', protectBranch, enforceBranch, orderController.getSalesSummary);
+router.get('/sales-summary/pdf', protectBranch, enforceBranch, orderController.downloadSalesSummaryPdf);
+router.get('/reports-summary', protectBranch, enforceBranch, orderController.getReportsSummary);
+router.get('/export-report', protectBranch, enforceBranch, orderController.exportReport);
+router.get('/item-sales-summary', protectBranch, enforceBranch, orderController.getItemSalesSummary);
+router.get('/hourly-sales-summary', protectBranch, enforceBranch, orderController.getHourlySalesSummary);
+router.get('/monthly-sales-summary', protectBranch, enforceBranch, orderController.getMonthlySalesSummary);
+router.get('/dashboard-metrics', protectBranch, enforceBranch, orderController.getDashboardMetrics);
+router.get('/customers', protectBranch, enforceBranch, orderController.getUniqueCustomers);
+router.post('/sales-summary/deposit', protectBranch, enforceBranch, orderController.saveDeposit);
+router.get('/', protectBranch, enforceBranch, orderController.getAllOrders);
+
+// ── Dynamic Parameterized Routes (/:id) ──
+router.get('/:id', orderController.getOrderById);
+router.get('/:id/pdf', protectBranch, orderController.downloadReceiptPdf);
+router.patch('/:id/status', protectBranch, orderController.updateOrderStatus);
+router.patch('/:id/kitchen-clear', protectBranch, orderController.kitchenClear);
+router.patch('/:id/due-time', protectBranch, orderController.updateOrderDueTime);
+router.patch('/:id/payment', protectBranch, orderController.markOrderPaid);
+router.patch('/:id', protectBranch, orderController.updateOrderItems);
+router.post('/:id/refund', protectBranch, orderController.refundOrder);
+router.post('/:id/cancel', protectBranch, orderController.cancelOrder);
+router.delete('/:id', protectBranch, orderController.cancelOrder);
 
 module.exports = router;

@@ -9,12 +9,15 @@ const cookieParser = require("cookie-parser");
 
 const connectDB = require("./config/db");
 const logger = require("./shared/utils/logger");
+const responseTimeMiddleware = require("./shared/middleware/responseTime");
+const { generalLimiter } = require("./shared/middleware/rateLimiter");
 
 const app = express();
 
+// Register Response Time & SLA Monitoring Middleware
+app.use(responseTimeMiddleware);
 
-
-
+// Connect Database
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -29,8 +32,8 @@ app.use(async (req, res, next) => {
 });
 
 app.use(helmet());
-app.use(cookieParser()); 
-
+app.use(cookieParser());
+app.use(generalLimiter);
 
 const allowedOrigins = [
   "http://localhost:3000",
@@ -75,10 +78,8 @@ app.use(
   }),
 );
 
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 
 app.use(
   morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
@@ -87,7 +88,6 @@ app.use(
     },
   }),
 );
-
 
 const { initCompanyModule } = require("./modules/company");
 const { initMenuModule } = require("./modules/menu");
@@ -106,7 +106,6 @@ initExpenseModule(app);
 initPaymentModule(app);
 initDeliveryModule(app);
 initEmployeeModule(app);
-
 
 app.get("/api/health", (req, res) => {
   res.status(200).json({
