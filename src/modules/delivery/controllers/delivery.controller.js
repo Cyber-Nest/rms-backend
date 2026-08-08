@@ -689,40 +689,48 @@ exports.driverLogin = async (req, res) => {
 
     const cleanDriverId = driverId.trim().toUpperCase();
     const cleanPin = password.trim();
+    const idRegex = new RegExp("^" + cleanDriverId + "$", "i");
 
     let employee = null;
+    let driver = null;
+
     if (branchId) {
       employee = await Employee.findOne({
         branchId: String(branchId),
-        $or: [{ employeeId: cleanDriverId }, { phone: cleanDriverId }],
+        $or: [{ employeeId: idRegex }, { phone: cleanDriverId }],
         isActive: true,
       });
-    }
 
-    let driver = null;
-    if (branchId) {
       driver = await Driver.findOne({
         restaurantId: String(branchId),
         $or: [
-          { driverId: cleanDriverId },
+          { driverId: idRegex },
           ...(employee?.driverRef ? [{ _id: employee.driverRef }] : []),
         ],
       });
     }
 
-    if (!branchId) {
-      if (!driver) {
-        driver = await Driver.findOne({ driverId: cleanDriverId });
-      }
-      if (!employee && driver?.driverRef) {
-        employee = await Employee.findById(driver.driverRef);
-      }
+    // Global fallback if not found with specific branchId
+    if (!employee) {
+      employee = await Employee.findOne({
+        $or: [{ employeeId: idRegex }, { phone: cleanDriverId }],
+        isActive: true,
+      });
+    }
+
+    if (!driver) {
+      driver = await Driver.findOne({
+        $or: [
+          { driverId: idRegex },
+          ...(employee?.driverRef ? [{ _id: employee.driverRef }] : []),
+        ],
+      });
     }
 
     if (!driver && !employee) {
       return res.status(401).json({
         success: false,
-        message: "Driver ID is not registered for this restaurant branch.",
+        message: "Driver ID is not registered in the system.",
       });
     }
 
@@ -1933,9 +1941,13 @@ exports.generateBranchQrToken = async (req, res) => {
       });
     }
 
-    const apiUrl =
+    let apiUrl =
       process.env.API_PUBLIC_URL ||
       `${req.protocol}://${req.get("host")}/api`;
+
+    if (!apiUrl.includes("localhost") && !apiUrl.includes("127.0.0.1") && apiUrl.startsWith("http://")) {
+      apiUrl = apiUrl.replace("http://", "https://");
+    }
 
     const signedToken = generateSignedQrPayload({
       branchId: String(branchId),
