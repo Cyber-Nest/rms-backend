@@ -1854,13 +1854,16 @@ exports.downloadDriverDropPdf = async (req, res) => {
  */
 exports.verifyStoreQr = async (req, res) => {
   try {
-    const { qrToken } = req.body;
-    if (!qrToken) {
+    const rawQrToken = req.body?.qrToken;
+    if (!rawQrToken || typeof rawQrToken !== "string") {
       return res.status(400).json({
         success: false,
         message: "QR token is required.",
       });
     }
+
+    // Sanitize token: remove whitespace, newlines, carriage returns, and outer quotes
+    const qrToken = rawQrToken.trim().replace(/^["']|["']$/g, "").replace(/[\r\n]+/g, "");
 
     // Determine fallback API URL dynamically from backend host
     let defaultApiUrl =
