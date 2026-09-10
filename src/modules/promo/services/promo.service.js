@@ -1,11 +1,12 @@
 const Promo = require('../models/promo.model');
 const logger = require('../../../shared/utils/logger');
 
-exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtotal = 0, items = [] }) => {
+exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtotal = 0, items = [], applyCount = 1 }) => {
   try {
     if (!code) throw new Error('Promo code is required.');
 
     const cleanCode = String(code).toUpperCase().trim();
+    const validApplyCount = Math.max(1, Math.floor(Number(applyCount) || 1));
 
     const promo = await Promo.findOne({ code: cleanCode, isActive: true })
       .select(
@@ -52,8 +53,16 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
     }
 
     //Usage Limit check
-    if (promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
-      throw new Error('This promo code has reached its maximum usage limit.');
+    if (promo.usageLimit !== null) {
+      if (promo.usedCount >= promo.usageLimit) {
+        throw new Error('This promo code has reached its maximum usage limit.');
+      }
+      if (promo.usedCount + validApplyCount > promo.usageLimit) {
+        const remaining = promo.usageLimit - promo.usedCount;
+        throw new Error(
+          `Only ${remaining} usage(s) remaining for this promo code.`
+        );
+      }
     }
 
     //Category-based Cart Subtotal Calculation
@@ -133,17 +142,18 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       );
     }
 
-    // Calculate final discount
-    let discountAmount = 0;
+    // Calculate final discount with applyCount multiplier
+    let singleDiscount = 0;
     if (promo.discountType === 'percentage') {
-      discountAmount = (eligibleSubtotal * promo.discountValue) / 100;
+      singleDiscount = (eligibleSubtotal * promo.discountValue) / 100;
       if (promo.maxDiscount !== null && promo.maxDiscount > 0) {
-        discountAmount = Math.min(discountAmount, promo.maxDiscount);
+        singleDiscount = Math.min(singleDiscount, promo.maxDiscount);
       }
     } else {
-      discountAmount = Math.min(promo.discountValue, eligibleSubtotal);
+      singleDiscount = Math.min(promo.discountValue, eligibleSubtotal);
     }
 
+    let discountAmount = Math.min(singleDiscount * validApplyCount, eligibleSubtotal);
     discountAmount = Math.round(discountAmount * 100) / 100;
 
     return {
@@ -151,6 +161,7 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
       description: promo.description,
       discountType: promo.discountType,
       discountValue: promo.discountValue,
+      applyCount: validApplyCount,
       discountAmount,
       eligibleSubtotal: Math.round(eligibleSubtotal * 100) / 100,
     };
@@ -161,15 +172,16 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
 };
 
 // Increment Usage on Order Place
-exports.incrementUsage = async (code) => {
+exports.incrementUsage = async (code, count = 1) => {
   if (!code) return;
+  const validCount = Math.max(1, Math.floor(Number(count) || 1));
   try {
     await Promo.findOneAndUpdate(
       { code: String(code).toUpperCase().trim() },
-      { $inc: { usedCount: 1 } }
+      { $inc: { usedCount: validCount } }
     );
   } catch (err) {
-    logger.error(`Error incrementing promo usage for ${code}: ${err.message}`);
+    logger.error(`Error incrementing promo usage for ${code} (count: ${validCount}): ${err.message}`);
   }
 };
 
@@ -202,6 +214,8 @@ exports.getAllPromos = async ({
   search = '',
   channel = '',
   status = '',
+  branchId = '',
+  fields = '',
   page = 1,
   limit = 50,
 } = {}) => {
@@ -219,14 +233,23 @@ exports.getAllPromos = async ({
     if (status === 'active') query.isActive = true;
     if (status === 'inactive') query.isActive = false;
 
+    if (branchId) {
+      query.$or = [
+        { applicableBranchScope: 'all_branches' },
+        { applicableBranchScope: 'specific_branches', branchIds: branchId },
+      ];
+    }
+
     const skip = (Number(page) - 1) * Number(limit);
+    const selectProjection = fields ? fields.split(',').join(' ') : null;
+
+    let dbQuery = Promo.find(query).sort({ createdAt: -1 });
+    if (selectProjection) {
+      dbQuery = dbQuery.select(selectProjection);
+    }
 
     const [promos, total] = await Promise.all([
-      Promo.find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(Number(limit))
-        .lean(),
+      dbQuery.skip(skip).limit(Number(limit)).lean(),
       Promo.countDocuments(query),
     ]);
 

@@ -8,13 +8,14 @@ const handleError = (res, error, status = 400) => {
 
 exports.validatePromo = async (req, res) => {
   try {
-    const { code, channel, branchId, subtotal, items } = req.body || {};
+    const { code, channel, branchId, subtotal, items, applyCount } = req.body || {};
     const result = await promoService.validatePromo({
       code,
       channel: channel || 'both',
       branchId: branchId || null,
       subtotal: Number(subtotal) || 0,
       items: items || [],
+      applyCount: applyCount || 1,
     });
     res.status(200).json({ success: true, data: result });
   } catch (error) {
@@ -33,11 +34,13 @@ exports.createPromo = async (req, res) => {
 
 exports.getAllPromos = async (req, res) => {
   try {
-    const { search, channel, status, page, limit } = req.query;
+    const { search, channel, status, branchId, fields, page, limit } = req.query;
     const result = await promoService.getAllPromos({
       search,
       channel,
       status,
+      branchId,
+      fields,
       page,
       limit,
     });

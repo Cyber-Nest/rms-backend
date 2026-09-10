@@ -178,6 +178,50 @@ exports.generateReceiptPdf = async (order, res) => {
       .text(typeStr, startX, doc.y, { align: "center", width: printableWidth });
     doc.moveDown(0.4);
 
+    // Order Taken By (Left Aligned, Above Customer Details)
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .text(
+        `Order Taken By : ${order.placedBy || order.employeeName || order.userName || "Manager"}`,
+        startX + 5,
+        doc.y,
+        { align: "left", width: printableWidth - 5 }
+      );
+    doc.moveDown(0.3);
+
+    // Customer Details Block (only if real customer info exists)
+    const c = order.customer;
+    const hasValidCustomer =
+      c &&
+      ((c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") ||
+        (c.phone && c.phone.trim() !== "") ||
+        (c.address && c.address.trim() !== "") ||
+        (c.driverNotes && c.driverNotes.trim() !== ""));
+
+    if (hasValidCustomer) {
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8)
+        .text("CUSTOMER DETAILS", startX + 5, doc.y, { align: "left", width: printableWidth - 5 });
+      doc.moveDown(0.2);
+      doc.font("Helvetica").fontSize(7.5);
+      if (c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") {
+        doc.text(`Name : ${c.name}`, startX + 5, doc.y);
+      }
+      if (c.phone && c.phone.trim() !== "") {
+        doc.text(`Phone : ${c.phone}`, startX + 5, doc.y);
+      }
+      if (c.address && c.address.trim() !== "") {
+        const fullAddr = `${c.address}${c.postalCode ? `, ${c.postalCode}` : ""}`;
+        doc.text(`Address : ${fullAddr}`, startX + 5, doc.y);
+      }
+      if (c.driverNotes && c.driverNotes.trim() !== "") {
+        doc.text(`Driver Notes : ${c.driverNotes}`, startX + 5, doc.y);
+      }
+      doc.moveDown(0.4);
+    }
+
     // 3. Items Table Header
     doc
       .moveTo(startX, doc.y)
@@ -344,171 +388,173 @@ exports.generateReceiptPdf = async (order, res) => {
       });
     doc.moveDown(0.5);
 
-    // 6. Transaction Record (Conditional for Card vs Cash)
-    doc
-      .moveTo(startX, doc.y)
-      .lineTo(startX + printableWidth, doc.y)
-      .dash(2, { space: 2 })
-      .stroke("#333333")
-      .undash();
-    doc.moveDown(0.4);
+    // 6. Transaction Record (Only when order is PAID)
+    if (order.paymentStatus === "paid") {
+      doc
+        .moveTo(startX, doc.y)
+        .lineTo(startX + printableWidth, doc.y)
+        .dash(2, { space: 2 })
+        .stroke("#333333")
+        .undash();
+      doc.moveDown(0.4);
 
-    // Check payment history or payment method
-    let isAccountPay = ["doordash", "skip", "ubereats"].includes(
-      order.orderSource,
-    );
-    let isCardPayment = false;
-    let cardInfo = {
-      acct: "CARD",
-      cardNum: "N/A",
-      type: "CARD",
-      transNum: order.paymentIntentId || "N/A",
-      aid: "N/A",
-    };
-    let cashInfo = { cashGiven: total, changeGiven: 0 };
+      // Check payment history or payment method
+      let isAccountPay = ["doordash", "skip", "ubereats"].includes(
+        order.orderSource,
+      );
+      let isCardPayment = false;
+      let cardInfo = {
+        acct: "CARD",
+        cardNum: "N/A",
+        type: "CARD",
+        transNum: order.paymentIntentId || "N/A",
+        aid: "N/A",
+      };
+      let cashInfo = { cashGiven: total, changeGiven: 0 };
 
-    if (
-      !isAccountPay &&
-      (order.orderSource === "online" || order.paymentMethod === "stripe")
-    ) {
-      isCardPayment = true;
-      cardInfo.acct = "STRIPE CARD";
-      cardInfo.aid = "ONLINE_STRIPE";
-    }
-
-    if (
-      order.payments &&
-      Array.isArray(order.payments) &&
-      order.payments.length > 0
-    ) {
-      const p = order.payments[0];
       if (
         !isAccountPay &&
-        ["card", "interac", "debit", "credit"].includes(p.method?.toLowerCase())
+        (order.orderSource === "online" || order.paymentMethod === "stripe")
       ) {
         isCardPayment = true;
-        cardInfo.acct = p.cardBrand
-          ? p.cardBrand.toUpperCase()
-          : order.orderSource === "online"
-            ? "STRIPE CARD"
-            : "INTERAC";
-        cardInfo.cardNum = p.cardLast4 ? `************${p.cardLast4}` : "N/A";
-        cardInfo.type = p.cardFunding ? p.cardFunding.toUpperCase() : "CARD";
-        cardInfo.transNum = p.transactionId
-          ? p.transactionId
-          : order.paymentIntentId || "N/A";
-        cardInfo.aid =
-          order.orderSource === "online"
-            ? "ONLINE_STRIPE"
-            : p.cardBrand
-              ? "CARD_PAYMENT"
-              : "0THB2O87P7ZOBIK";
-      } else if (p.method?.toLowerCase() === "cash") {
-        isCardPayment = false;
-        cashInfo.cashGiven = p.cashGiven || total;
-        cashInfo.changeGiven = p.changeGiven || 0;
+        cardInfo.acct = "STRIPE CARD";
+        cardInfo.aid = "ONLINE_STRIPE";
       }
-    } else if (
-      !isAccountPay &&
-      order.paymentType &&
-      ["card", "interac", "debit", "credit"].includes(
-        order.paymentType.toLowerCase(),
-      )
-    ) {
-      isCardPayment = true;
-    }
 
-    doc
-      .font("Helvetica-Bold")
-      .fontSize(8.5)
-      .text("TRANSACTION RECORD", startX, doc.y, {
-        align: "center",
-        width: printableWidth,
-      });
-    doc.moveDown(0.3);
-    doc.font("Helvetica").fontSize(8);
+      if (
+        order.payments &&
+        Array.isArray(order.payments) &&
+        order.payments.length > 0
+      ) {
+        const p = order.payments[0];
+        if (
+          !isAccountPay &&
+          ["card", "interac", "debit", "credit"].includes(p.method?.toLowerCase())
+        ) {
+          isCardPayment = true;
+          cardInfo.acct = p.cardBrand
+            ? p.cardBrand.toUpperCase()
+            : order.orderSource === "online"
+              ? "STRIPE CARD"
+              : "INTERAC";
+          cardInfo.cardNum = p.cardLast4 ? `************${p.cardLast4}` : "N/A";
+          cardInfo.type = p.cardFunding ? p.cardFunding.toUpperCase() : "CARD";
+          cardInfo.transNum = p.transactionId
+            ? p.transactionId
+            : order.paymentIntentId || "N/A";
+          cardInfo.aid =
+            order.orderSource === "online"
+              ? "ONLINE_STRIPE"
+              : p.cardBrand
+                ? "CARD_PAYMENT"
+                : "0THB2O87P7ZOBIK";
+        } else if (p.method?.toLowerCase() === "cash") {
+          isCardPayment = false;
+          cashInfo.cashGiven = p.cashGiven || total;
+          cashInfo.changeGiven = p.changeGiven || 0;
+        }
+      } else if (
+        !isAccountPay &&
+        order.paymentType &&
+        ["card", "interac", "debit", "credit"].includes(
+          order.paymentType.toLowerCase(),
+        )
+      ) {
+        isCardPayment = true;
+      }
 
-    if (isAccountPay) {
-      rowY = doc.y;
-      doc.text("TYPE :", startX, rowY);
       doc
         .font("Helvetica-Bold")
-        .text("ACCOUNT PAY", startX + 80, rowY, { width: 126, align: "right" });
-      doc.font("Helvetica").moveDown(0.2);
-      rowY = doc.y;
-      doc.text("PLATFORM :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(
-          order.orderSource === "online"
-            ? "WEBSITE"
-            : order.orderSource.toUpperCase(),
-          startX + 80,
-          rowY,
-          { width: 126, align: "right" },
-        );
-      doc.font("Helvetica").moveDown(0.2);
-    } else if (isCardPayment) {
-      rowY = doc.y;
-      doc.text("ACCT :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(cardInfo.acct, startX + 80, rowY, { width: 126, align: "right" });
-      doc.font("Helvetica").moveDown(0.2);
-      rowY = doc.y;
-      doc.text("CARD NUMBER :", startX, rowY);
-      doc.font("Helvetica-Bold").text(cardInfo.cardNum, startX + 80, rowY, {
-        width: 126,
-        align: "right",
-      });
-      doc.font("Helvetica").moveDown(0.2);
-      rowY = doc.y;
-      doc.text("Type :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(cardInfo.type, startX + 80, rowY, { width: 126, align: "right" });
-      doc.font("Helvetica").moveDown(0.2);
-      rowY = doc.y;
-      doc.text("TRANS # :", startX, rowY);
-      doc.font("Helvetica-Bold").text(cardInfo.transNum, startX + 80, rowY, {
-        width: 126,
-        align: "right",
-      });
-      doc.font("Helvetica").moveDown(0.2);
-      rowY = doc.y;
-      doc.text("AID :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(cardInfo.aid, startX + 80, rowY, { width: 126, align: "right" });
-      doc.font("Helvetica").moveDown(0.2);
-    } else {
-      // Cash payment details - omitted card number & trans #
-      rowY = doc.y;
-      doc.text("TYPE :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text("CASH", startX + 80, rowY, { width: 126, align: "right" });
-      doc.font("Helvetica").moveDown(0.2);
-      rowY = doc.y;
-      doc.text("CASH GIVEN :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(`$${cashInfo.cashGiven.toFixed(2)}`, startX + 80, rowY, {
+        .fontSize(8.5)
+        .text("TRANSACTION RECORD", startX, doc.y, {
+          align: "center",
+          width: printableWidth,
+        });
+      doc.moveDown(0.3);
+      doc.font("Helvetica").fontSize(8);
+
+      if (isAccountPay) {
+        rowY = doc.y;
+        doc.text("TYPE :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text("ACCOUNT PAY", startX + 80, rowY, { width: 126, align: "right" });
+        doc.font("Helvetica").moveDown(0.2);
+        rowY = doc.y;
+        doc.text("PLATFORM :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text(
+            order.orderSource === "online"
+              ? "WEBSITE"
+              : order.orderSource.toUpperCase(),
+            startX + 80,
+            rowY,
+            { width: 126, align: "right" },
+          );
+        doc.font("Helvetica").moveDown(0.2);
+      } else if (isCardPayment) {
+        rowY = doc.y;
+        doc.text("ACCT :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text(cardInfo.acct, startX + 80, rowY, { width: 126, align: "right" });
+        doc.font("Helvetica").moveDown(0.2);
+        rowY = doc.y;
+        doc.text("CARD NUMBER :", startX, rowY);
+        doc.font("Helvetica-Bold").text(cardInfo.cardNum, startX + 80, rowY, {
           width: 126,
           align: "right",
         });
-      doc.font("Helvetica").moveDown(0.2);
-      rowY = doc.y;
-      doc.text("CHANGE :", startX, rowY);
-      doc
-        .font("Helvetica-Bold")
-        .text(`$${cashInfo.changeGiven.toFixed(2)}`, startX + 80, rowY, {
+        doc.font("Helvetica").moveDown(0.2);
+        rowY = doc.y;
+        doc.text("Type :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text(cardInfo.type, startX + 80, rowY, { width: 126, align: "right" });
+        doc.font("Helvetica").moveDown(0.2);
+        rowY = doc.y;
+        doc.text("TRANS # :", startX, rowY);
+        doc.font("Helvetica-Bold").text(cardInfo.transNum, startX + 80, rowY, {
           width: 126,
           align: "right",
         });
-      doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica").moveDown(0.2);
+        rowY = doc.y;
+        doc.text("AID :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text(cardInfo.aid, startX + 80, rowY, { width: 126, align: "right" });
+        doc.font("Helvetica").moveDown(0.2);
+      } else {
+        // Cash payment details - omitted card number & trans #
+        rowY = doc.y;
+        doc.text("TYPE :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text("CASH", startX + 80, rowY, { width: 126, align: "right" });
+        doc.font("Helvetica").moveDown(0.2);
+        rowY = doc.y;
+        doc.text("CASH GIVEN :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text(`$${cashInfo.cashGiven.toFixed(2)}`, startX + 80, rowY, {
+            width: 126,
+            align: "right",
+          });
+        doc.font("Helvetica").moveDown(0.2);
+        rowY = doc.y;
+        doc.text("CHANGE :", startX, rowY);
+        doc
+          .font("Helvetica-Bold")
+          .text(`$${cashInfo.changeGiven.toFixed(2)}`, startX + 80, rowY, {
+            width: 126,
+            align: "right",
+          });
+        doc.font("Helvetica").moveDown(0.2);
+      }
+      doc.moveDown(0.3);
     }
-    doc.moveDown(0.3);
 
     doc
       .moveTo(startX, doc.y)

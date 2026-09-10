@@ -402,3 +402,23 @@ exports.getNextOrderNumber = async (req, res) => {
     handleError(res, error, 500);
   }
 };
+
+exports.searchCustomer = async (req, res) => {
+  try {
+    const { query, branchId } = req.query;
+    const activeBranchId = req.activeBranchId || branchId || req.branch?.branchId || req.branch?._id;
+    const customer = await orderService.searchCustomer({
+      query,
+      branchId: activeBranchId,
+    });
+    if (!customer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No customer found." });
+    }
+    res.status(200).json({ success: true, data: customer });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
