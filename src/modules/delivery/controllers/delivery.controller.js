@@ -1854,12 +1854,28 @@ exports.downloadDriverDropPdf = async (req, res) => {
  */
 exports.verifyStoreQr = async (req, res) => {
   try {
-    const { qrToken } = req.body;
-    if (!qrToken) {
+    const rawQrToken = req.body?.qrToken;
+    if (!rawQrToken || typeof rawQrToken !== "string") {
       return res.status(400).json({
         success: false,
         message: "QR token is required.",
       });
+    }
+
+    // Sanitize token: remove whitespace, newlines, carriage returns, and outer quotes
+    const qrToken = rawQrToken.trim().replace(/^["']|["']$/g, "").replace(/[\r\n]+/g, "");
+
+    // Determine fallback API URL dynamically from backend host
+    let defaultApiUrl =
+      process.env.API_PUBLIC_URL ||
+      `${req.protocol}://${req.get("host")}/api`;
+
+    if (
+      !defaultApiUrl.includes("localhost") &&
+      !defaultApiUrl.includes("127.0.0.1") &&
+      defaultApiUrl.startsWith("http://")
+    ) {
+      defaultApiUrl = defaultApiUrl.replace("http://", "https://");
     }
 
     // Try to verify as signed HMAC token
@@ -1872,7 +1888,7 @@ exports.verifyStoreQr = async (req, res) => {
           branchId: payload.branchId,
           branchName: payload.branchName,
           branchCode: payload.branchCode,
-          apiUrl: payload.apiUrl || "",
+          apiUrl: payload.apiUrl || defaultApiUrl,
           verified: true,
           method: "signed",
         },
@@ -1898,7 +1914,7 @@ exports.verifyStoreQr = async (req, res) => {
               branchId: parsed.branchId,
               branchName: parsed.branchName || parsed.name || "Restaurant Branch",
               branchCode: parsed.branchCode || parsed.code || "STORE",
-              apiUrl: parsed.apiUrl || "",
+              apiUrl: parsed.apiUrl || defaultApiUrl,
               verified: true,
               method: "legacy_plain",
             },
@@ -1918,6 +1934,7 @@ exports.verifyStoreQr = async (req, res) => {
     handleError(res, error, 500);
   }
 };
+
 
 /**
  * GET: Generate a signed QR token for a branch 

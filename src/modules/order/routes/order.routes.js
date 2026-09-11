@@ -17,6 +17,7 @@ router.get('/item-sales-summary', protectBranch, enforceBranch, orderController.
 router.get('/hourly-sales-summary', protectBranch, enforceBranch, orderController.getHourlySalesSummary);
 router.get('/monthly-sales-summary', protectBranch, enforceBranch, orderController.getMonthlySalesSummary);
 router.get('/dashboard-metrics', protectBranch, enforceBranch, orderController.getDashboardMetrics);
+router.get('/customers/search', orderController.searchCustomer);
 router.get('/customers', protectBranch, enforceBranch, orderController.getUniqueCustomers);
 router.post('/sales-summary/deposit', protectBranch, enforceBranch, orderController.saveDeposit);
 router.get('/', protectBranch, enforceBranch, orderController.getAllOrders);
