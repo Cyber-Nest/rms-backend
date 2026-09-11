@@ -42,8 +42,8 @@ exports.generateReceiptPdf = async (order, res) => {
     const printableWidth = pageWidth - 2 * margin;
     const startX = margin;
 
-    // ── Dynamic Height Calculation ───────────────────────────────────────────
-    const lineH = 22;
+    // ── Dynamic Height Calculation ──────────────────────────────────────────────
+    const lineH = 18;
     let h = margin * 2;
     h += lineH * 5 + 10; // Header & Store info
     h += lineH * 5 + 10; // Order #, Date, Status, Type, Taken By
@@ -133,7 +133,7 @@ exports.generateReceiptPdf = async (order, res) => {
     // 1. Header & Store Info Box
     doc
       .font("Helvetica-Bold")
-      .fontSize(24)
+      .fontSize(18)
       .fillColor("#000000")
       .text(branchInfo.name, startX, doc.y, {
         align: "center",
@@ -141,7 +141,7 @@ exports.generateReceiptPdf = async (order, res) => {
       });
     doc
       .font("Helvetica-Bold")
-      .fontSize(16)
+      .fontSize(12)
       .text(branchInfo.code, startX, doc.y, {
         align: "center",
         width: printableWidth,
@@ -150,7 +150,7 @@ exports.generateReceiptPdf = async (order, res) => {
 
     // Dashed Store Info Box
     const boxStartY = doc.y;
-    doc.font("Helvetica-Bold").fontSize(13.5);
+    doc.font("Helvetica-Bold").fontSize(10);
     doc.text(branchInfo.address, startX + 2, boxStartY + 4, {
       align: "center",
       width: printableWidth - 4,
@@ -182,7 +182,7 @@ exports.generateReceiptPdf = async (order, res) => {
       : "104";
     doc
       .font("Helvetica-Bold")
-      .fontSize(30)
+      .fontSize(22)
       .text(`ORDER # : ${orderNumStr}`, startX, doc.y, {
         align: "center",
         width: printableWidth,
@@ -190,14 +190,14 @@ exports.generateReceiptPdf = async (order, res) => {
     doc.moveDown(0.2);
     doc
       .font("Helvetica-Bold")
-      .fontSize(14)
+      .fontSize(10.5)
       .text(formatDate(order.createdAt), startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc
       .font("Helvetica-Bold")
-      .fontSize(16)
+      .fontSize(12)
       .text(
         `ORDER SUMMARY (${order.paymentStatus === "paid" ? "PAID" : "UNPAID"})`,
         startX,
@@ -218,14 +218,14 @@ exports.generateReceiptPdf = async (order, res) => {
     }
     doc
       .font("Helvetica-Bold")
-      .fontSize(22)
+      .fontSize(16)
       .text(typeStr, startX, doc.y, { align: "center", width: printableWidth });
     doc.moveDown(0.4);
 
     // Order Taken By
     doc
       .font("Helvetica-Bold")
-      .fontSize(14)
+      .fontSize(10.5)
       .text(
         `Order Taken By : ${order.placedBy || order.employeeName || order.userName || "Manager"}`,
         startX,
@@ -238,10 +238,10 @@ exports.generateReceiptPdf = async (order, res) => {
     if (hasValidCustomer) {
       doc
         .font("Helvetica-Bold")
-        .fontSize(16)
+        .fontSize(12)
         .text("CUSTOMER DETAILS", startX, doc.y, { align: "left", width: printableWidth });
       doc.moveDown(0.2);
-      doc.font("Helvetica-Bold").fontSize(14);
+      doc.font("Helvetica-Bold").fontSize(10.5);
       if (c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") {
         doc.text(`Name : ${c.name}`, startX, doc.y);
       }
@@ -267,7 +267,7 @@ exports.generateReceiptPdf = async (order, res) => {
       .undash();
     doc.moveDown(0.3);
     const headerY = doc.y;
-    doc.font("Helvetica-Bold").fontSize(16);
+    doc.font("Helvetica-Bold").fontSize(12);
     doc.text("ITEMS", startX, headerY, { width: 120 });
     doc.text("QTY", startX + 120, headerY, { width: 30, align: "center" });
     doc.text("AMT", startX + 150, headerY, { width: 56, align: "right" });
@@ -289,9 +289,9 @@ exports.generateReceiptPdf = async (order, res) => {
             ? item.totalPrice
             : item.basePrice * item.quantity) || 0;
 
-        doc.font("Helvetica-Bold").fontSize(17);
+        doc.font("Helvetica-Bold").fontSize(13);
         doc.text(item.name || "Item", startX, itemY, { width: 120 });
-        doc.font("Helvetica-Bold").fontSize(17);
+        doc.font("Helvetica-Bold").fontSize(13);
         doc.text(String(item.quantity || 1), startX + 120, itemY, {
           width: 30,
           align: "center",
@@ -308,7 +308,7 @@ exports.generateReceiptPdf = async (order, res) => {
           Array.isArray(item.selectedModifiers) &&
           item.selectedModifiers.length > 0
         ) {
-          doc.font("Helvetica-Bold").fontSize(13.5).fillColor("#000000");
+          doc.font("Helvetica-Bold").fontSize(10).fillColor("#000000");
           item.selectedModifiers.forEach((mod) => {
             const modPriceStr =
               mod.price > 0 ? ` (+$${mod.price.toFixed(2)})` : "";
@@ -321,7 +321,7 @@ exports.generateReceiptPdf = async (order, res) => {
         if (item.note) {
           doc
             .font("Helvetica-BoldOblique")
-            .fontSize(13)
+            .fontSize(9.5)
             .text(`   Note : ${item.note}`, startX, doc.y, {
               width: printableWidth - 5,
             });
@@ -346,7 +346,7 @@ exports.generateReceiptPdf = async (order, res) => {
     const deliveryFee = order.deliveryFee || 0;
     const total = order.total || 0;
 
-    doc.font("Helvetica-Bold").fontSize(15);
+    doc.font("Helvetica-Bold").fontSize(11);
     let rowY = doc.y;
     doc.text("Subtotal :", startX, rowY, { width: 100 });
     doc
@@ -413,11 +413,11 @@ exports.generateReceiptPdf = async (order, res) => {
     rowY = doc.y;
     doc
       .font("Helvetica-Bold")
-      .fontSize(24)
+      .fontSize(18)
       .text("Total :", startX, rowY, { width: 100 });
     doc
       .font("Helvetica-Bold")
-      .fontSize(24)
+      .fontSize(18)
       .text(`$${total.toFixed(2)}`, startX + 100, rowY, {
         width: 106,
         align: "right",
@@ -501,13 +501,13 @@ exports.generateReceiptPdf = async (order, res) => {
 
       doc
         .font("Helvetica-Bold")
-        .fontSize(16)
+        .fontSize(12)
         .text("TRANSACTION RECORD", startX, doc.y, {
           align: "center",
           width: printableWidth,
         });
       doc.moveDown(0.3);
-      doc.font("Helvetica-Bold").fontSize(13.5);
+      doc.font("Helvetica-Bold").fontSize(10);
 
       if (isAccountPay) {
         rowY = doc.y;
@@ -603,7 +603,7 @@ exports.generateReceiptPdf = async (order, res) => {
     // 7. Footer Slogans
     doc
       .font("Helvetica-BoldOblique")
-      .fontSize(14)
+      .fontSize(11)
       .text('"Don\'t Cook Tonight, Call Chicken Delight!"', startX, doc.y, {
         align: "center",
         width: printableWidth,
@@ -611,7 +611,7 @@ exports.generateReceiptPdf = async (order, res) => {
     doc.moveDown(0.3);
     doc
       .font("Helvetica-Bold")
-      .fontSize(13)
+      .fontSize(10)
       .text("Have a nice day, Visit us again!", startX, doc.y, {
         align: "center",
         width: printableWidth,
@@ -619,7 +619,7 @@ exports.generateReceiptPdf = async (order, res) => {
     doc.moveDown(0.3);
     doc
       .font("Helvetica-Bold")
-      .fontSize(10.5)
+      .fontSize(8.5)
       .fillColor("#000000")
       .text(
         "We are implementing new POS systems. If you see any discrepancy in the invoice, please email the invoice to accounting@chickendelight.com",
