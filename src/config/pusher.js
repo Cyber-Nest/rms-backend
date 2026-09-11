@@ -104,6 +104,10 @@ const authenticateChannel = (socketId, channelName, context = {}) => {
     return pusherInstance.authorizeChannel(socketId, channelName);
   }
 
+  if (channelName.startsWith("private-branch-") && channelName.endsWith("-print")) {
+    return pusherInstance.authorizeChannel(socketId, channelName);
+  }
+
   if (channelName.startsWith("private-restaurant-")) {
     const channelBranchId = channelName.replace("private-restaurant-", "").trim();
     const reqBranchId = context.branchId ? String(context.branchId) : null;
@@ -190,6 +194,27 @@ const triggerDriverStatusChange = async (restaurantId, driverData) => {
   }
 };
 
+const triggerPrintJob = async (branchId, jobPayload) => {
+  if (!pusherInstance) {
+    logger.debug("Pusher is not initialized, skipping print-job trigger.");
+    return;
+  }
+  if (!branchId) {
+    logger.warn("triggerPrintJob called without branchId — skipping.");
+    return;
+  }
+
+  try {
+    const channel = `private-branch-${branchId.toString()}-print`;
+    await pusherInstance.trigger(channel, "print-job", jobPayload);
+    logger.info(
+      `Pusher 'print-job' triggered on [${channel}] for order: ${jobPayload.orderNumber || jobPayload.orderId}`
+    );
+  } catch (error) {
+    logger.error(`Failed to trigger Pusher print-job: ${error.message}`);
+  }
+};
+
 module.exports = {
   pusherInstance,
   triggerNewOrder,
@@ -198,4 +223,5 @@ module.exports = {
   triggerDeliveryAssigned,
   triggerDeliveryStatusUpdate,
   triggerDriverStatusChange,
+  triggerPrintJob,
 };

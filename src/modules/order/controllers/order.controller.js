@@ -2,8 +2,12 @@ const orderService = require('../services/order.service');
 const receiptPdfService = require('../services/receiptPdf.service');
 const reportPdfService = require('../services/reportPdf.service');
 const reportExcelService = require('../services/reportExcel.service');
+const silentPrintService = require('../services/silentPrint.service');
+const fs = require('fs');
+const path = require('path');
 const logger = require('../../../shared/utils/logger');
 const { getLocalDateStr } = require('../../../shared/utils/timezone');
+const { triggerPrintJob } = require('../../../config/pusher');
 
 const formatDateOnly = (dateStr) => {
   if (!dateStr) return "";
@@ -161,6 +165,66 @@ exports.downloadReceiptPdf = async (req, res) => {
     await receiptPdfService.generateReceiptPdf(order, res);
   } catch (error) {
     handleError(res, error, 500);
+  }
+};
+
+exports.silentPrintOrderReceipt = async (req, res) => {
+  let tempPdfPath = null;
+  try {
+    const { id } = req.params;
+    const { printerName } = req.body || {};
+
+    const order = await orderService.getOrderById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const cleanOrderNum = (order.orderNumber || id).replace('#', '');
+    const filename = `receipt-${cleanOrderNum}-${Date.now()}.pdf`;
+    tempPdfPath = silentPrintService.getTempReceiptPath(filename);
+
+    const writeStream = fs.createWriteStream(tempPdfPath);
+    await receiptPdfService.generateReceiptPdf(order, writeStream);
+
+    await new Promise((resolve, reject) => {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    const printResult = await silentPrintService.printPdfSilently(tempPdfPath, printerName);
+
+    const paperSize = req.body?.paperSize || '80mm';
+    const itemsFilter = req.body?.itemsFilter || 'all';
+    const activeBranchId = order.branchId || req.branch?.branchId || req.branch?._id;
+
+    if (activeBranchId) {
+      await triggerPrintJob(activeBranchId, {
+        orderId: order._id.toString(),
+        orderNumber: order.orderNumber,
+        pdfUrl: `/api/orders/${order._id}/pdf?paperSize=${paperSize}&itemsFilter=${itemsFilter}`,
+        paperSize,
+        itemsFilter,
+        printerName: printerName || null,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Receipt sent to thermal printer successfully for order ${order.orderNumber}`,
+      printer: printResult.printer || 'Default Printer',
+    });
+  } catch (error) {
+    logger.error(`Silent Print Order Receipt Error: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      message: `Failed to print receipt: ${error.message}`,
+    });
+  } finally {
+    if (tempPdfPath) {
+      setTimeout(() => {
+        if (fs.existsSync(tempPdfPath)) fs.unlink(tempPdfPath, () => {});
+      }, 15000);
+    }
   }
 };
 

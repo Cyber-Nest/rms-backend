@@ -36,17 +36,58 @@ exports.generateReceiptPdf = async (order, res) => {
       }
     }
 
-    // 80mm width
+    // ── Page setup with dynamic height fitting content ───────────────────────
+    const pageWidth = 226; // 80mm thermal paper standard width in PDF points
+    const margin = 8;
+    const printableWidth = pageWidth - 2 * margin;
+    const startX = margin;
+
+    // ── Dynamic Height Calculation ───────────────────────────────────────────
+    const lineH = 22;
+    let h = margin * 2;
+    h += lineH * 5 + 10; // Header & Store info
+    h += lineH * 5 + 10; // Order #, Date, Status, Type, Taken By
+
+    const c = order.customer;
+    const hasValidCustomer =
+      c &&
+      ((c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") ||
+        (c.phone && c.phone.trim() !== "") ||
+        (c.address && c.address.trim() !== "") ||
+        (c.driverNotes && c.driverNotes.trim() !== ""));
+    if (hasValidCustomer) {
+      h += lineH * 4 + 10;
+    }
+
+    h += lineH * 2 + 10; // Items Header
+
+    if (order.items && Array.isArray(order.items)) {
+      order.items.forEach((item) => {
+        h += lineH + 6;
+        if (item.selectedModifiers && Array.isArray(item.selectedModifiers)) {
+          h += item.selectedModifiers.length * (lineH + 2);
+        }
+        if (item.note) h += lineH + 4;
+        h += 6;
+      });
+    }
+
+    h += lineH * 6 + 10; // Subtotal, Discount, GST, Delivery, Tip, Total
+    if (order.paymentStatus === "paid") {
+      h += lineH * 4 + 10; // Transaction Record
+    }
+    h += lineH * 4 + 10; // Footer slogans
+    h += 60; // Safety padding
+
+    const pageHeight = Math.max(200, Math.ceil(h));
+
     const doc = new PDFDocument({
-      size: [226, 800],
-      margin: 10,
+      size: [pageWidth, pageHeight],
+      margin: 0,
     });
 
     // Pipe PDF
     doc.pipe(res);
-
-    const printableWidth = 206; // 226 - 2*10 margin
-    const startX = 10;
 
     // Helper functions for formatting
     const formatDate = (dateStr) => {
@@ -87,48 +128,51 @@ exports.generateReceiptPdf = async (order, res) => {
       }
     };
 
+    doc.y = margin;
+
     // 1. Header & Store Info Box
     doc
       .font("Helvetica-Bold")
-      .fontSize(13)
+      .fontSize(24)
+      .fillColor("#000000")
       .text(branchInfo.name, startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc
       .font("Helvetica-Bold")
-      .fontSize(8)
+      .fontSize(16)
       .text(branchInfo.code, startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
-    doc.moveDown(0.5);
+    doc.moveDown(0.4);
 
     // Dashed Store Info Box
     const boxStartY = doc.y;
-    doc.font("Helvetica").fontSize(7.5);
-    doc.text(branchInfo.address, startX + 5, boxStartY + 4, {
+    doc.font("Helvetica-Bold").fontSize(13.5);
+    doc.text(branchInfo.address, startX + 2, boxStartY + 4, {
       align: "center",
-      width: printableWidth - 10,
+      width: printableWidth - 4,
     });
     doc.text(branchInfo.city, {
       align: "center",
-      width: printableWidth - 10,
+      width: printableWidth - 4,
     });
     doc.text(`Tel # : ${branchInfo.phone}`, {
       align: "center",
-      width: printableWidth - 10,
+      width: printableWidth - 4,
     });
     doc.text(`GST# : ${branchInfo.gst}`, {
       align: "center",
-      width: printableWidth - 10,
+      width: printableWidth - 4,
     });
     const boxEndY = doc.y + 4;
 
     doc
-      .rect(startX + 2, boxStartY, printableWidth - 4, boxEndY - boxStartY)
+      .rect(startX, boxStartY, printableWidth, boxEndY - boxStartY)
       .dash(2, { space: 2 })
-      .stroke("#666666")
+      .stroke("#000000")
       .undash();
     doc.y = boxEndY + 8;
 
@@ -138,22 +182,22 @@ exports.generateReceiptPdf = async (order, res) => {
       : "104";
     doc
       .font("Helvetica-Bold")
-      .fontSize(14)
+      .fontSize(30)
       .text(`ORDER # : ${orderNumStr}`, startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc.moveDown(0.2);
     doc
-      .font("Helvetica")
-      .fontSize(8)
+      .font("Helvetica-Bold")
+      .fontSize(14)
       .text(formatDate(order.createdAt), startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc
       .font("Helvetica-Bold")
-      .fontSize(8)
+      .fontSize(16)
       .text(
         `ORDER SUMMARY (${order.paymentStatus === "paid" ? "PAID" : "UNPAID"})`,
         startX,
@@ -174,50 +218,42 @@ exports.generateReceiptPdf = async (order, res) => {
     }
     doc
       .font("Helvetica-Bold")
-      .fontSize(9)
+      .fontSize(22)
       .text(typeStr, startX, doc.y, { align: "center", width: printableWidth });
     doc.moveDown(0.4);
 
-    // Order Taken By (Left Aligned, Above Customer Details)
+    // Order Taken By
     doc
       .font("Helvetica-Bold")
-      .fontSize(8)
+      .fontSize(14)
       .text(
         `Order Taken By : ${order.placedBy || order.employeeName || order.userName || "Manager"}`,
-        startX + 5,
+        startX,
         doc.y,
-        { align: "left", width: printableWidth - 5 }
+        { align: "left", width: printableWidth }
       );
     doc.moveDown(0.3);
 
-    // Customer Details Block (only if real customer info exists)
-    const c = order.customer;
-    const hasValidCustomer =
-      c &&
-      ((c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") ||
-        (c.phone && c.phone.trim() !== "") ||
-        (c.address && c.address.trim() !== "") ||
-        (c.driverNotes && c.driverNotes.trim() !== ""));
-
+    // Customer Details Block
     if (hasValidCustomer) {
       doc
         .font("Helvetica-Bold")
-        .fontSize(8)
-        .text("CUSTOMER DETAILS", startX + 5, doc.y, { align: "left", width: printableWidth - 5 });
+        .fontSize(16)
+        .text("CUSTOMER DETAILS", startX, doc.y, { align: "left", width: printableWidth });
       doc.moveDown(0.2);
-      doc.font("Helvetica").fontSize(7.5);
+      doc.font("Helvetica-Bold").fontSize(14);
       if (c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") {
-        doc.text(`Name : ${c.name}`, startX + 5, doc.y);
+        doc.text(`Name : ${c.name}`, startX, doc.y);
       }
       if (c.phone && c.phone.trim() !== "") {
-        doc.text(`Phone : ${c.phone}`, startX + 5, doc.y);
+        doc.text(`Phone : ${c.phone}`, startX, doc.y);
       }
       if (c.address && c.address.trim() !== "") {
         const fullAddr = `${c.address}${c.postalCode ? `, ${c.postalCode}` : ""}`;
-        doc.text(`Address : ${fullAddr}`, startX + 5, doc.y);
+        doc.text(`Address : ${fullAddr}`, startX, doc.y);
       }
       if (c.driverNotes && c.driverNotes.trim() !== "") {
-        doc.text(`Driver Notes : ${c.driverNotes}`, startX + 5, doc.y);
+        doc.text(`Driver Notes : ${c.driverNotes}`, startX, doc.y);
       }
       doc.moveDown(0.4);
     }
@@ -227,11 +263,11 @@ exports.generateReceiptPdf = async (order, res) => {
       .moveTo(startX, doc.y)
       .lineTo(startX + printableWidth, doc.y)
       .dash(2, { space: 2 })
-      .stroke("#333333")
+      .stroke("#000000")
       .undash();
     doc.moveDown(0.3);
     const headerY = doc.y;
-    doc.font("Helvetica-Bold").fontSize(8);
+    doc.font("Helvetica-Bold").fontSize(16);
     doc.text("ITEMS", startX, headerY, { width: 120 });
     doc.text("QTY", startX + 120, headerY, { width: 30, align: "center" });
     doc.text("AMT", startX + 150, headerY, { width: 56, align: "right" });
@@ -240,7 +276,7 @@ exports.generateReceiptPdf = async (order, res) => {
       .moveTo(startX, doc.y)
       .lineTo(startX + printableWidth, doc.y)
       .dash(2, { space: 2 })
-      .stroke("#333333")
+      .stroke("#000000")
       .undash();
     doc.moveDown(0.4);
 
@@ -253,9 +289,9 @@ exports.generateReceiptPdf = async (order, res) => {
             ? item.totalPrice
             : item.basePrice * item.quantity) || 0;
 
-        doc.font("Helvetica-Bold").fontSize(8.5);
+        doc.font("Helvetica-Bold").fontSize(17);
         doc.text(item.name || "Item", startX, itemY, { width: 120 });
-        doc.font("Helvetica").fontSize(8.5);
+        doc.font("Helvetica-Bold").fontSize(17);
         doc.text(String(item.quantity || 1), startX + 120, itemY, {
           width: 30,
           align: "center",
@@ -272,22 +308,22 @@ exports.generateReceiptPdf = async (order, res) => {
           Array.isArray(item.selectedModifiers) &&
           item.selectedModifiers.length > 0
         ) {
-          doc.font("Helvetica").fontSize(7.5).fillColor("#444444");
+          doc.font("Helvetica-Bold").fontSize(13.5).fillColor("#000000");
           item.selectedModifiers.forEach((mod) => {
             const modPriceStr =
               mod.price > 0 ? ` (+$${mod.price.toFixed(2)})` : "";
             doc.text(`   ${mod.optionName}${modPriceStr}`, startX, doc.y, {
-              width: printableWidth - 10,
+              width: printableWidth - 5,
             });
           });
           doc.fillColor("#000000");
         }
         if (item.note) {
           doc
-            .font("Helvetica-Oblique")
-            .fontSize(7.5)
+            .font("Helvetica-BoldOblique")
+            .fontSize(13)
             .text(`   Note : ${item.note}`, startX, doc.y, {
-              width: printableWidth - 10,
+              width: printableWidth - 5,
             });
         }
         doc.moveDown(0.3);
@@ -299,7 +335,7 @@ exports.generateReceiptPdf = async (order, res) => {
       .moveTo(startX, doc.y)
       .lineTo(startX + printableWidth, doc.y)
       .dash(2, { space: 2 })
-      .stroke("#333333")
+      .stroke("#000000")
       .undash();
     doc.moveDown(0.4);
 
@@ -310,7 +346,7 @@ exports.generateReceiptPdf = async (order, res) => {
     const deliveryFee = order.deliveryFee || 0;
     const total = order.total || 0;
 
-    doc.font("Helvetica").fontSize(8.5);
+    doc.font("Helvetica-Bold").fontSize(15);
     let rowY = doc.y;
     doc.text("Subtotal :", startX, rowY, { width: 100 });
     doc
@@ -323,7 +359,7 @@ exports.generateReceiptPdf = async (order, res) => {
 
     if (discount > 0) {
       rowY = doc.y;
-      doc.font("Helvetica").text("Discount :", startX, rowY, { width: 100 });
+      doc.font("Helvetica-Bold").text("Discount :", startX, rowY, { width: 100 });
       doc
         .font("Helvetica-Bold")
         .text(`-$${discount.toFixed(2)}`, startX + 100, rowY, {
@@ -334,7 +370,7 @@ exports.generateReceiptPdf = async (order, res) => {
     }
 
     rowY = doc.y;
-    doc.font("Helvetica").text(`GST :`, startX, rowY, { width: 100 });
+    doc.font("Helvetica-Bold").text(`GST :`, startX, rowY, { width: 100 });
     doc
       .font("Helvetica-Bold")
       .text(
@@ -348,7 +384,7 @@ exports.generateReceiptPdf = async (order, res) => {
     if (deliveryFee > 0) {
       rowY = doc.y;
       doc
-        .font("Helvetica")
+        .font("Helvetica-Bold")
         .text("Delivery Fee :", startX, rowY, { width: 100 });
       doc
         .font("Helvetica-Bold")
@@ -363,7 +399,7 @@ exports.generateReceiptPdf = async (order, res) => {
     if (tip > 0) {
       rowY = doc.y;
       doc
-        .font("Helvetica")
+        .font("Helvetica-Bold")
         .text("Tip :", startX, rowY, { width: 100 });
       doc
         .font("Helvetica-Bold")
@@ -377,11 +413,11 @@ exports.generateReceiptPdf = async (order, res) => {
     rowY = doc.y;
     doc
       .font("Helvetica-Bold")
-      .fontSize(10)
+      .fontSize(24)
       .text("Total :", startX, rowY, { width: 100 });
     doc
       .font("Helvetica-Bold")
-      .fontSize(10)
+      .fontSize(24)
       .text(`$${total.toFixed(2)}`, startX + 100, rowY, {
         width: 106,
         align: "right",
@@ -394,7 +430,7 @@ exports.generateReceiptPdf = async (order, res) => {
         .moveTo(startX, doc.y)
         .lineTo(startX + printableWidth, doc.y)
         .dash(2, { space: 2 })
-        .stroke("#333333")
+        .stroke("#000000")
         .undash();
       doc.moveDown(0.4);
 
@@ -465,13 +501,13 @@ exports.generateReceiptPdf = async (order, res) => {
 
       doc
         .font("Helvetica-Bold")
-        .fontSize(8.5)
+        .fontSize(16)
         .text("TRANSACTION RECORD", startX, doc.y, {
           align: "center",
           width: printableWidth,
         });
       doc.moveDown(0.3);
-      doc.font("Helvetica").fontSize(8);
+      doc.font("Helvetica-Bold").fontSize(13.5);
 
       if (isAccountPay) {
         rowY = doc.y;
@@ -479,7 +515,7 @@ exports.generateReceiptPdf = async (order, res) => {
         doc
           .font("Helvetica-Bold")
           .text("ACCOUNT PAY", startX + 80, rowY, { width: 126, align: "right" });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
         rowY = doc.y;
         doc.text("PLATFORM :", startX, rowY);
         doc
@@ -492,40 +528,40 @@ exports.generateReceiptPdf = async (order, res) => {
             rowY,
             { width: 126, align: "right" },
           );
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
       } else if (isCardPayment) {
         rowY = doc.y;
         doc.text("ACCT :", startX, rowY);
         doc
           .font("Helvetica-Bold")
           .text(cardInfo.acct, startX + 80, rowY, { width: 126, align: "right" });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
         rowY = doc.y;
         doc.text("CARD NUMBER :", startX, rowY);
         doc.font("Helvetica-Bold").text(cardInfo.cardNum, startX + 80, rowY, {
           width: 126,
           align: "right",
         });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
         rowY = doc.y;
         doc.text("Type :", startX, rowY);
         doc
           .font("Helvetica-Bold")
           .text(cardInfo.type, startX + 80, rowY, { width: 126, align: "right" });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
         rowY = doc.y;
         doc.text("TRANS # :", startX, rowY);
         doc.font("Helvetica-Bold").text(cardInfo.transNum, startX + 80, rowY, {
           width: 126,
           align: "right",
         });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
         rowY = doc.y;
         doc.text("AID :", startX, rowY);
         doc
           .font("Helvetica-Bold")
           .text(cardInfo.aid, startX + 80, rowY, { width: 126, align: "right" });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
       } else {
         // Cash payment details - omitted card number & trans #
         rowY = doc.y;
@@ -533,7 +569,7 @@ exports.generateReceiptPdf = async (order, res) => {
         doc
           .font("Helvetica-Bold")
           .text("CASH", startX + 80, rowY, { width: 126, align: "right" });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
         rowY = doc.y;
         doc.text("CASH GIVEN :", startX, rowY);
         doc
@@ -542,7 +578,7 @@ exports.generateReceiptPdf = async (order, res) => {
             width: 126,
             align: "right",
           });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
         rowY = doc.y;
         doc.text("CHANGE :", startX, rowY);
         doc
@@ -551,7 +587,7 @@ exports.generateReceiptPdf = async (order, res) => {
             width: 126,
             align: "right",
           });
-        doc.font("Helvetica").moveDown(0.2);
+        doc.font("Helvetica-Bold").moveDown(0.2);
       }
       doc.moveDown(0.3);
     }
@@ -560,31 +596,31 @@ exports.generateReceiptPdf = async (order, res) => {
       .moveTo(startX, doc.y)
       .lineTo(startX + printableWidth, doc.y)
       .dash(2, { space: 2 })
-      .stroke("#333333")
+      .stroke("#000000")
       .undash();
     doc.moveDown(0.5);
 
     // 7. Footer Slogans
     doc
       .font("Helvetica-BoldOblique")
-      .fontSize(8)
+      .fontSize(14)
       .text('"Don\'t Cook Tonight, Call Chicken Delight!"', startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc.moveDown(0.3);
     doc
-      .font("Helvetica")
-      .fontSize(7.5)
+      .font("Helvetica-Bold")
+      .fontSize(13)
       .text("Have a nice day, Visit us again!", startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc.moveDown(0.3);
     doc
-      .font("Helvetica")
-      .fontSize(6.5)
-      .fillColor("#555555")
+      .font("Helvetica-Bold")
+      .fontSize(10.5)
+      .fillColor("#000000")
       .text(
         "We are implementing new POS systems. If you see any discrepancy in the invoice, please email the invoice to accounting@chickendelight.com",
         startX,
