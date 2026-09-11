@@ -64,7 +64,11 @@ exports.pusherAuth = async (req, res) => {
       });
     }
 
-    const validPatterns = [/^private-restaurant-.+$/, /^private-order-.+$/];
+    const validPatterns = [
+      /^private-restaurant-.+$/,
+      /^private-order-.+$/,
+      /^private-branch-.+-print$/,
+    ];
     const isValid = validPatterns.some((p) => p.test(channel_name));
     if (!isValid) {
       return res
