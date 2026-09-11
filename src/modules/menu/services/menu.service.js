@@ -123,9 +123,9 @@ exports.getAllProducts = async (query = {}) => {
   try {
     if (query.minimal === "true" || query.minimal === true) {
       return await Product.find()
-        .select('_id name price image categoryId productId isActive kitchenLabel disabledBranches outOfStockBranches')
+        .select('_id name price image categoryId productId isActive kitchenLabel displayOrder disabledBranches outOfStockBranches')
         .populate('categoryId', 'name')
-        .sort({ name: 1 })
+        .sort({ displayOrder: 1, name: 1 })
         .lean();
     }
 
@@ -137,7 +137,7 @@ exports.getAllProducts = async (query = {}) => {
           path: 'options.modifierGroups'
         }
       })
-      .sort({ name: 1 })
+      .sort({ displayOrder: 1, name: 1 })
       .lean();
   } catch (error) {
     logger.error(`Menu Service Error: getAllProducts - ${error.message}`);
@@ -148,9 +148,9 @@ exports.getAllProducts = async (query = {}) => {
 exports.getBranchProductsList = async (branchId) => {
   try {
     const products = await Product.find()
-      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock disabledBranches outOfStockBranches')
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel displayOrder isOutOfStock disabledBranches outOfStockBranches')
       .populate('categoryId', 'name')
-      .sort({ name: 1 });
+      .sort({ displayOrder: 1, name: 1 });
 
     if (branchId) {
       const bIdStr = branchId.toString();
@@ -376,6 +376,7 @@ exports.getPOSMenuFeed = async (branchId = null) => {
           path: 'options.modifierGroups'
         }
       })
+      .sort({ displayOrder: 1, name: 1 })
       .lean();
     
     const bIdStr = branchId ? branchId.toString() : null;
@@ -387,6 +388,8 @@ exports.getPOSMenuFeed = async (branchId = null) => {
         slug: cat.slug,
         description: cat.description,
         image: cat.image,
+        displayOrder: cat.displayOrder ?? 0,
+        sortOrder: cat.displayOrder ?? 0,
         disabledBranches: cat.disabledBranches || [],
       })),
       menuItems: products.map(prod => {
@@ -405,6 +408,7 @@ exports.getPOSMenuFeed = async (branchId = null) => {
           badge: prod.badge,
           isPopular: prod.isPopular,
           kitchenLabel: prod.kitchenLabel || 'chicken',
+          displayOrder: prod.displayOrder ?? 0,
           itemType: prod.itemType,
           hasVariants: !!prod.hasVariants,
           variants: (prod.variants || []).map(v => ({

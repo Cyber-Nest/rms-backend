@@ -68,7 +68,11 @@ const productSchema = new mongoose.Schema({
   outOfStockBranches: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Branch'
-  }]
+  }],
+  displayOrder: {
+    type: Number,
+    default: 0,
+  }
 }, {
   timestamps: true
 });
@@ -102,6 +106,7 @@ productSchema.index({ categoryId: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ name: 1 });
 productSchema.index({ isActive: 1, categoryId: 1 });
+productSchema.index({ categoryId: 1, displayOrder: 1 });
 productSchema.index({ disabledBranches: 1 });
 productSchema.index({ outOfStockBranches: 1 });
 
