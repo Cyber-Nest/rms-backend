@@ -1,4 +1,5 @@
 const PDFDocument = require("pdfkit");
+const { PassThrough } = require("stream");
 const logger = require("../../../shared/utils/logger");
 const Branch = require("../../company/models/branch.model");
 
@@ -958,4 +959,28 @@ exports.generateSalesSummaryReceiptPdf = async (
         });
     }
   }
+};
+
+exports.generateReceiptBuffer = (order) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const buffers = [];
+      const stream = new PassThrough();
+
+      stream.on("data", (chunk) => buffers.push(chunk));
+      stream.on("end", () => resolve(Buffer.concat(buffers)));
+      stream.on("error", (err) => reject(err));
+
+      // Compatibility methods for PDF pipe destination
+      stream.setHeader = () => {};
+      stream.status = () => ({
+        json: (err) => reject(new Error(err?.message || "PDF generation error")),
+      });
+      stream.headersSent = false;
+
+      exports.generateReceiptPdf(order, stream).catch(reject);
+    } catch (err) {
+      reject(err);
+    }
+  });
 };

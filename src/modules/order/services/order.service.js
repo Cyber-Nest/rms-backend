@@ -665,24 +665,55 @@ exports.updateOrderItems = async (id, updateData) => {
     }
     if (updateData.subtotal !== undefined) order.subtotal = updateData.subtotal;
     if (updateData.tax !== undefined) order.tax = updateData.tax;
+    if (updateData.deliveryFee !== undefined) order.deliveryFee = updateData.deliveryFee;
     if (updateData.discount !== undefined) order.discount = updateData.discount;
-    if (updateData.total !== undefined) {
-      order.total = updateData.total;
-
-      const paymentsTotal = order.payments
-        ? order.payments.reduce((sum, p) => sum + p.amount, 0)
-        : 0;
-      if (paymentsTotal >= updateData.total - 0.01) {
-        order.paymentStatus = "paid";
-      } else {
-        order.paymentStatus = "unpaid";
-      }
-    }
+    if (updateData.total !== undefined) order.total = updateData.total;
+    if (updateData.orderType !== undefined) order.orderType = updateData.orderType;
+    if (updateData.orderSource !== undefined) order.orderSource = updateData.orderSource;
+    if (updateData.paymentTiming !== undefined) order.paymentTiming = updateData.paymentTiming;
+    if (updateData.paymentType !== undefined) order.paymentType = updateData.paymentType;
+    if (updateData.paymentMethod !== undefined) order.paymentMethod = updateData.paymentMethod;
+    if (updateData.customer !== undefined) order.customer = updateData.customer;
     if (updateData.notes !== undefined) order.notes = updateData.notes;
 
+    if (updateData.payments && Array.isArray(updateData.payments) && updateData.payments.length > 0) {
+      order.payments = [...(order.payments || []), ...updateData.payments];
+      for (const p of updateData.payments) {
+        await Payment.create({
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          branchId: order.branchId,
+          amount: p.amount,
+          method: p.method || "cash",
+          transactionId: p.transactionId || null,
+          cardBrand: p.cardBrand || "",
+          cardFunding: p.cardFunding || "",
+          cardLast4: p.cardLast4 || "",
+          status: "completed",
+        }).catch((err) => logger.warn(`Payment create error in updateOrderItems: ${err.message}`));
+      }
+    }
+
+    const paymentsTotal = order.payments
+      ? order.payments.reduce((sum, p) => sum + (p.amount || 0), 0)
+      : 0;
+    if (paymentsTotal >= (order.total || 0) - 0.01) {
+      order.paymentStatus = "paid";
+    } else if (order.paymentTiming === "pay-now" && updateData.payments && updateData.payments.length > 0) {
+      order.paymentStatus = "paid";
+    } else {
+      order.paymentStatus = "unpaid";
+    }
+
     await order.save();
+    try {
+      triggerOrderUpdated(order);
+    } catch (pushErr) {
+      logger.warn(`Pusher update trigger error: ${pushErr.message}`);
+    }
+
     logger.info(
-      `Order ${order.orderNumber} items updated. Payment status: ${order.paymentStatus}`,
+      `Order ${order.orderNumber} items updated. Type: ${order.orderType}, Payment status: ${order.paymentStatus}`,
     );
     return order;
   } catch (error) {
