@@ -523,6 +523,11 @@ exports.markOrderPaid = async (id, payments) => {
     }
 
     await order.save();
+    try {
+      triggerOrderUpdated(order);
+    } catch (pushErr) {
+      logger.warn(`Pusher update trigger error in markOrderPaid: ${pushErr.message}`);
+    }
 
     logger.info(
       `Order ${order.orderNumber} payments updated. Total paid: ${paymentsTotal}`,
@@ -539,7 +544,7 @@ exports.cancelOrder = async (id, { reason = "", userName = "Manager" } = {}) => 
   try {
     const noteText = reason ? `Order Cancelled: ${reason.trim()}` : "Order Cancelled";
     const order = await Order.findOneAndUpdate(
-      { _id: id, status: { $nin: ["completed", "cancelled"] } },
+      { _id: id, status: { $ne: "cancelled" } },
       {
         $set: { status: "cancelled", cancelReason: reason.trim() },
         $push: {
