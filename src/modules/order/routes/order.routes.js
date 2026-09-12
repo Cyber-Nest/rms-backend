@@ -11,6 +11,7 @@ router.post('/', orderController.createOrder);
 router.get('/next-number', protectBranch, enforceBranch, orderController.getNextOrderNumber);
 router.get('/sales-summary', protectBranch, enforceBranch, orderController.getSalesSummary);
 router.get('/sales-summary/pdf', protectBranch, enforceBranch, orderController.downloadSalesSummaryPdf);
+router.post('/sales-summary/print', protectBranch, enforceBranch, orderController.silentPrintSalesSummary);
 router.get('/reports-summary', protectBranch, enforceBranch, orderController.getReportsSummary);
 router.get('/export-report', protectBranch, enforceBranch, orderController.exportReport);
 router.get('/item-sales-summary', protectBranch, enforceBranch, orderController.getItemSalesSummary);

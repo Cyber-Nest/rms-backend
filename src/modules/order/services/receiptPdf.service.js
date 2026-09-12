@@ -678,10 +678,9 @@ exports.generateSalesSummaryReceiptPdf = async (
       }
     }
 
-    // 80mm width. Since a daily summary has category lists, payment summaries, order types and expenses,
-    // we set height to 1200. This is standard for receipt print outputs.
+    // 80mm width. Standard thermal print output height.
     const doc = new PDFDocument({
-      size: [226, 1200],
+      size: [226, 1600],
       margin: 10,
     });
 
@@ -716,10 +715,10 @@ exports.generateSalesSummaryReceiptPdf = async (
       }
     };
 
-    // 1. Header & Store Info Box (strictly Black & White)
+    // 1. Header & Store Info Box (strictly Black & White matching order receipt)
     doc
       .font("Helvetica-Bold")
-      .fontSize(13)
+      .fontSize(16)
       .fillColor("#000000")
       .text(branchInfo.name, startX, doc.y, {
         align: "center",
@@ -727,7 +726,7 @@ exports.generateSalesSummaryReceiptPdf = async (
       });
     doc
       .font("Helvetica-Bold")
-      .fontSize(8)
+      .fontSize(11)
       .fillColor("#000000")
       .text(branchInfo.code, startX, doc.y, {
         align: "center",
@@ -737,7 +736,7 @@ exports.generateSalesSummaryReceiptPdf = async (
 
     // Dashed Store Info Box
     const boxStartY = doc.y;
-    doc.font("Helvetica").fontSize(7.5).fillColor("#000000");
+    doc.font("Helvetica").fontSize(9.5).fillColor("#000000");
     doc.text(branchInfo.address, startX + 5, boxStartY + 4, {
       align: "center",
       width: printableWidth - 10,
@@ -766,15 +765,15 @@ exports.generateSalesSummaryReceiptPdf = async (
     // 2. Report Header
     doc
       .font("Helvetica-Bold")
-      .fontSize(12)
+      .fontSize(14)
       .text("DAILY SALES SUMMARY", startX, doc.y, {
         align: "center",
         width: printableWidth,
       });
     doc.moveDown(0.2);
     doc
-      .font("Helvetica")
-      .fontSize(8)
+      .font("Helvetica-Bold")
+      .fontSize(10)
       .text(`Date Filter: ${formatDate(dateStr)}`, startX, doc.y, {
         align: "center",
         width: printableWidth,
@@ -798,23 +797,23 @@ exports.generateSalesSummaryReceiptPdf = async (
     // Helper for key-value row (B&W)
     const drawRow = (left, right, isBold = false, indent = 0) => {
       const rowY = doc.y;
-      doc.font(isBold ? "Helvetica-Bold" : "Helvetica").fontSize(8);
+      doc.font(isBold ? "Helvetica-Bold" : "Helvetica").fontSize(isBold ? 10.5 : 10);
       doc.text(left, startX + indent, rowY, {
-        width: printableWidth - 60 - indent,
+        width: printableWidth - 65 - indent,
       });
-      doc.text(right, startX + printableWidth - 60, rowY, {
-        width: 60,
+      doc.text(right, startX + printableWidth - 65, rowY, {
+        width: 65,
         align: "right",
       });
-      doc.moveDown(0.2);
+      doc.moveDown(0.25);
     };
 
     // Section 1: Sales By Category
     drawDivider();
     doc
       .font("Helvetica-Bold")
-      .fontSize(8.5)
-      .text("SALES BY CATEGORY", startX, doc.y);
+      .fontSize(11)
+      .text("SALES BY CATEGORY", startX, doc.y, { align: "center", width: printableWidth });
     doc.moveDown(0.2);
     drawDivider();
 
@@ -835,8 +834,8 @@ exports.generateSalesSummaryReceiptPdf = async (
     drawDivider();
     doc
       .font("Helvetica-Bold")
-      .fontSize(8.5)
-      .text("SALES ACCOUNTING", startX, doc.y);
+      .fontSize(11)
+      .text("SALES ACCOUNTING", startX, doc.y, { align: "center", width: printableWidth });
     doc.moveDown(0.2);
     drawDivider();
 
@@ -857,8 +856,8 @@ exports.generateSalesSummaryReceiptPdf = async (
     drawDivider();
     doc
       .font("Helvetica-Bold")
-      .fontSize(8.5)
-      .text("SALES RECEIVED", startX, doc.y);
+      .fontSize(11)
+      .text("SALES RECEIVED", startX, doc.y, { align: "center", width: printableWidth });
     doc.moveDown(0.2);
     drawDivider();
 
@@ -877,7 +876,7 @@ exports.generateSalesSummaryReceiptPdf = async (
 
     // Section 4: Order Type
     drawDivider();
-    doc.font("Helvetica-Bold").fontSize(8.5).text("ORDER TYPE", startX, doc.y);
+    doc.font("Helvetica-Bold").fontSize(11).text("ORDER TYPE", startX, doc.y, { align: "center", width: printableWidth });
     doc.moveDown(0.2);
     drawDivider();
 
@@ -899,7 +898,7 @@ exports.generateSalesSummaryReceiptPdf = async (
       summary.expense.length > 0
     ) {
       drawDivider();
-      doc.font("Helvetica-Bold").fontSize(8.5).text("EXPENSES", startX, doc.y);
+      doc.font("Helvetica-Bold").fontSize(11).text("EXPENSES", startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
       drawDivider();
 
@@ -908,7 +907,7 @@ exports.generateSalesSummaryReceiptPdf = async (
         const mode = exp.paymentMode || "cash";
         drawRow(`${emp} (${mode})`, fmt(exp.total));
         if (exp.pst || exp.gst || exp.hst) {
-          doc.font("Helvetica").fontSize(7).fillColor("#444444");
+          doc.font("Helvetica").fontSize(8.5).fillColor("#444444");
           doc.text(
             `   PST: ${fmt(exp.pst)} | GST: ${fmt(exp.gst)} | HST: ${fmt(exp.hst)}`,
             startX,
@@ -931,7 +930,7 @@ exports.generateSalesSummaryReceiptPdf = async (
     drawDivider();
     doc
       .font("Helvetica-BoldOblique")
-      .fontSize(8)
+      .fontSize(9.5)
       .text('"Don\'t Cook Tonight, Call Chicken Delight!"', startX, doc.y, {
         align: "center",
         width: printableWidth,
@@ -939,7 +938,7 @@ exports.generateSalesSummaryReceiptPdf = async (
     doc.moveDown(0.3);
     doc
       .font("Helvetica")
-      .fontSize(7.5)
+      .fontSize(9)
       .text("Have a nice day, Visit us again!", startX, doc.y, {
         align: "center",
         width: printableWidth,
@@ -950,7 +949,7 @@ exports.generateSalesSummaryReceiptPdf = async (
     logger.error(
       `Error generating sales summary PDF receipt: ${error.message}`,
     );
-    if (!res.headersSent) {
+    if (res && !res.headersSent && typeof res.status === "function") {
       res
         .status(500)
         .json({

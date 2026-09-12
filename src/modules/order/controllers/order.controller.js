@@ -230,6 +230,66 @@ exports.silentPrintOrderReceipt = async (req, res) => {
   }
 };
 
+exports.silentPrintSalesSummary = async (req, res) => {
+  let tempPdfPath = null;
+  try {
+    const { date, startDate, endDate, branchId, printerName } = req.body || {};
+    const targetDate = date || startDate || req.query.date;
+    const activeBranchId = branchId || req.query.branchId || req.branch?.branchId || req.branch?._id;
+
+    const summary = await orderService.getSalesSummary({ date: targetDate, startDate, endDate, branchId: activeBranchId });
+    if (!summary) {
+      return res.status(404).json({ success: false, message: 'Sales summary data not found' });
+    }
+
+    const fileDateStr = targetDate || getLocalDateStr();
+    const filename = `sales-summary-${fileDateStr}-${Date.now()}.pdf`;
+    tempPdfPath = silentPrintService.getTempReceiptPath(filename);
+
+    const writeStream = fs.createWriteStream(tempPdfPath);
+    await receiptPdfService.generateSalesSummaryReceiptPdf(summary, fileDateStr, writeStream, activeBranchId);
+
+    await new Promise((resolve, reject) => {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    const printResult = await silentPrintService.printPdfSilently(tempPdfPath, printerName);
+
+    if (activeBranchId) {
+      await triggerPrintJob(activeBranchId, {
+        orderId: `sales-summary-${fileDateStr}`,
+        orderNumber: `SALES-SUMMARY-${fileDateStr}`,
+        type: 'sales-summary',
+        date: fileDateStr,
+        pdfUrl: `/api/orders/sales-summary/pdf?date=${fileDateStr}&branchId=${activeBranchId}`,
+        paperSize: '80mm',
+        printerName: printerName || null,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Sales summary receipt sent to thermal printer successfully',
+      printer: printResult.printer || 'Default Printer',
+      pdfUrl: `/api/orders/sales-summary/pdf?date=${fileDateStr}&branchId=${activeBranchId}`,
+    });
+  } catch (error) {
+    logger.error(`Silent Print Sales Summary Error: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to print sales summary receipt',
+    });
+  } finally {
+    if (tempPdfPath) {
+      setTimeout(() => {
+        if (fs.existsSync(tempPdfPath)) fs.unlink(tempPdfPath, () => {});
+      }, 15000);
+    }
+  }
+};
+
+
 
 exports.updateOrderStatus = async (req, res) => {
   try {
@@ -450,7 +510,7 @@ exports.downloadSalesSummaryPdf = async (req, res) => {
     const fileDateStr = date || startDate || getLocalDateStr();
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=sales-summary-${fileDateStr}.pdf`);
+    res.setHeader("Content-Disposition", `inline; filename=sales-summary-${fileDateStr}.pdf`);
 
     await receiptPdfService.generateSalesSummaryReceiptPdf(summary, fileDateStr, res, activeBranchId);
   } catch (error) {
