@@ -26,6 +26,8 @@ router.get('/', protectBranch, enforceBranch, orderController.getAllOrders);
 router.get('/:id', orderController.getOrderById);
 router.get('/:id/pdf', protectBranch, orderController.downloadReceiptPdf);
 router.post('/:id/print', protectBranch, orderController.silentPrintOrderReceipt);
+router.post('/:id/email-receipt', protectBranch, orderController.sendReceiptEmail);
+router.post('/:id/send-receipt', protectBranch, orderController.sendReceiptEmail);
 router.patch('/:id/status', protectBranch, orderController.updateOrderStatus);
 router.patch('/:id/kitchen-clear', protectBranch, orderController.kitchenClear);
 router.patch('/:id/due-time', protectBranch, orderController.updateOrderDueTime);

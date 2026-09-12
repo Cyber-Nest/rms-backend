@@ -3,6 +3,8 @@ const receiptPdfService = require('../services/receiptPdf.service');
 const reportPdfService = require('../services/reportPdf.service');
 const reportExcelService = require('../services/reportExcel.service');
 const silentPrintService = require('../services/silentPrint.service');
+const emailReceiptService = require('../services/emailReceipt.service');
+const Order = require('../models/order.model');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../../../shared/utils/logger');
@@ -481,6 +483,58 @@ exports.searchCustomer = async (req, res) => {
         .json({ success: false, message: "No customer found." });
     }
     res.status(200).json({ success: true, data: customer });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
+
+exports.sendReceiptEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email, name } = req.body;
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({ success: false, message: "Recipient email is required." });
+    }
+
+    const cleanEmail = email.trim();
+    const cleanName = name && name.trim() ? name.trim() : "";
+
+    const orderDoc = await Order.findById(id);
+    if (!orderDoc) {
+      return res.status(404).json({ success: false, message: "Order not found." });
+    }
+
+    if (!orderDoc.customer) {
+      orderDoc.customer = { name: cleanName || "No Name", email: cleanEmail, phone: "" };
+    } else {
+      orderDoc.customer.email = cleanEmail;
+      if (cleanName) {
+        orderDoc.customer.name = cleanName;
+      }
+    }
+    await orderDoc.save();
+
+    let pdfBuffer = null;
+    try {
+      pdfBuffer = await receiptPdfService.generateReceiptBuffer(orderDoc.toObject ? orderDoc.toObject() : orderDoc);
+    } catch (pdfErr) {
+      logger.warn(`Could not generate PDF buffer for email: ${pdfErr.message}`);
+    }
+
+    await emailReceiptService.sendReceiptEmail({
+      to: cleanEmail,
+      customerName: orderDoc.customer?.name || cleanName || "Valued Customer",
+      order: orderDoc.toObject ? orderDoc.toObject() : orderDoc,
+      pdfBuffer,
+    });
+
+    logger.info(`Receipt email for order ${orderDoc.orderNumber} sent to ${cleanEmail}`);
+    res.status(200).json({
+      success: true,
+      message: `Receipt for order ${orderDoc.orderNumber} sent successfully to ${cleanEmail}`,
+      customer: orderDoc.customer,
+    });
   } catch (error) {
     handleError(res, error, 500);
   }
