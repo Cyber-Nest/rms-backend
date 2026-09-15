@@ -5,6 +5,7 @@ const DriverDropSettlement = require("../models/DriverDropSettlement.model");
 const Order = require("../../order/models/order.model");
 const Attendance = require("../../employee/models/attendance.model");
 const Employee = require("../../employee/models/employee.model");
+const attendanceService = require("../../employee/services/attendance.service");
 const driverDropPdfService = require("../services/driverDropPdf.service");
 const silentPrintService = require("../../order/services/silentPrint.service");
 const logger = require("../../../shared/utils/logger");
@@ -1480,6 +1481,7 @@ exports.getDriverDropDrivers = async (req, res) => {
         status: d.status === "offline"
           ? "Available"
           : d.status,
+        isSettled: Boolean(settlement && settlement.status === "settled"),
       };
     });
 
@@ -1652,6 +1654,7 @@ exports.settleDriverDrop = async (req, res) => {
       additionalCommission = 0,
       additionalReason = "",
       settledBy = "Manager",
+      autoCheckout = false,
     } = req.body;
 
     if (!driverId || !date) {
@@ -1846,7 +1849,27 @@ exports.settleDriverDrop = async (req, res) => {
       }
     }
 
-    res.status(200).json({ success: true, data: settlement });
+    // Auto-checkout driver if requested
+    let isCheckedOut = false;
+    if (autoCheckout) {
+      try {
+        const emp = await Employee.findOne({
+          branchId: restaurantId,
+          $or: [{ driverRef: driver._id }, { employeeId: driver.driverId }],
+        }).lean();
+
+        if (emp) {
+          await attendanceService.checkOut(restaurantId, emp._id);
+          isCheckedOut = true;
+        }
+      } catch (checkoutErr) {
+        logger.warn(
+          `Auto checkout failed during settlement for driver ${driver.name}: ${checkoutErr.message}`
+        );
+      }
+    }
+
+    res.status(200).json({ success: true, data: settlement, isCheckedOut });
   } catch (error) {
     handleError(res, error, 500);
   }
