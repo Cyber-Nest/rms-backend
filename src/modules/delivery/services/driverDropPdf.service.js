@@ -1,12 +1,23 @@
 const PDFDocument = require("pdfkit");
 const logger = require("../../../shared/utils/logger");
+const Branch = require("../../company/models/branch.model");
 
 const fmt = (val) => (typeof val === "number" && !isNaN(val) ? val.toFixed(2) : "0.00");
 
-exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement, orders, branchId }, res) => {
+exports.generateDriverDropPdf = async ({ driver, date, type = "both", shiftNumber = 1, settlement, orders = [], branchId }, outputStream) => {
   try {
-    const driverCode = driver.driverId || "EMP-003";
-    const driverName = driver.name || "DRIVER";
+    const driverCode = driver?.driverId || driver?._id?.toString().slice(-4) || "EMP-001";
+    const driverName = driver?.name || "DRIVER";
+
+    let branchName = "PIZZA HUT";
+    if (branchId) {
+      try {
+        const b = await Branch.findById(branchId).select("name code").lean();
+        if (b && b.name) branchName = b.name.toUpperCase();
+      } catch (e) {
+        logger.warn(`Failed to fetch branch name for driver drop PDF: ${e.message}`);
+      }
+    }
 
     const formattedDate = new Date(date).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
     const formattedTime = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -33,33 +44,32 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement
 
     const driverBaseCommission = settlement?.driverBaseCommission ?? (totalOrders * 6.0);
     const additionalCommission = settlement?.additionalCommission ?? 0;
-    const additionalReason = settlement?.additionalReason || "";
     const driverTotalCommission = settlement?.driverTotalCommission ?? (driverBaseCommission + additionalCommission);
     const totalTipsEarned = settlement?.totalTipsEarned ?? (prepaidTips + terminalTips);
     const totalDriverEarning = settlement?.totalDriverEarning ?? (driverTotalCommission + totalTipsEarned);
     const totalCommissionDue = settlement?.totalCommissionDue ?? driverTotalCommission;
 
     // Height based on type
-    const docHeight = type === "both" ? 1000 : 550;
+    const docHeight = type === "both" ? 1080 : 600;
     const doc = new PDFDocument({
       size: [226, docHeight],
       margin: 8,
     });
 
-    doc.pipe(res);
+    doc.pipe(outputStream);
 
     const printableWidth = 210;
     const startX = 8;
 
     const drawDashedLine = () => {
       const lineStr = "----------------------------------------";
-      doc.font("Courier").fontSize(8).text(lineStr, startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier").fontSize(8.5).text(lineStr, startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
     };
 
     const drawAsteriskLine = () => {
       const lineStr = "****************************************";
-      doc.font("Courier").fontSize(8).text(lineStr, startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier").fontSize(8.5).text(lineStr, startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
     };
 
@@ -71,63 +81,63 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement
 
     const drawRow = (left, right, isBold = false) => {
       const rowY = doc.y;
-      doc.font(isBold ? "Courier-Bold" : "Courier").fontSize(8);
-      doc.text(left, startX, rowY, { width: 140 });
-      doc.text(right, startX + 140, rowY, { width: 70, align: "right" });
+      doc.font(isBold ? "Courier-Bold" : "Courier").fontSize(8.5);
+      doc.text(left, startX, rowY, { width: 135 });
+      doc.text(right, startX + 135, rowY, { width: 75, align: "right" });
       doc.moveDown(0.25);
     };
 
     // ── SLIP 1: EMPLOYEE SALES REPORT SLIP ──
     if (type === "sales" || type === "both") {
       // Header Logo & Title
-      doc.font("Courier-Bold").fontSize(12).text("Chicken", startX, doc.y, { align: "center", width: printableWidth });
-      doc.font("Courier-Bold").fontSize(9).text("DELIGHT", startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier-Bold").fontSize(13).text(branchName, startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.3);
       drawDashedLine();
 
-      doc.font("Courier-Bold").fontSize(8.5).text("------- Employee Sales Report -------", startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier-Bold").fontSize(9.5).text("------- Employee Sales Report -------", startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
 
-      doc.font("Courier").fontSize(8);
+      doc.font("Courier").fontSize(8.5);
       doc.text(`Employee: ${driverCode} - ${driverName}`, startX, doc.y);
+      doc.text(`Shift: SHIFT ${shiftNumber}`, startX, doc.y);
       const timeRowY = doc.y;
       doc.text(formattedDate, startX, timeRowY);
-      doc.text(formattedTime, startX + 130, timeRowY, { width: 80, align: "right" });
+      doc.text(formattedTime, startX + 120, timeRowY, { width: 90, align: "right" });
       doc.moveDown(0.3);
       drawDashedLine();
 
       // Order Details Section
-      doc.font("Courier-Bold").fontSize(8.5).text("------- Order Details -------", startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier-Bold").fontSize(9.5).text("------- Order Details -------", startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
 
       const headerY = doc.y;
-      doc.font("Courier-Bold").fontSize(7.5);
-      doc.text("TICKET NAME", startX, headerY, { width: 95 });
-      doc.text("TOTAL", startX + 95, headerY, { width: 40, align: "right" });
-      doc.text("DC", startX + 135, headerY, { width: 35, align: "right" });
-      doc.text("PD", startX + 170, headerY, { width: 40, align: "right" });
+      doc.font("Courier-Bold").fontSize(8);
+      doc.text("TICKET NAME", startX, headerY, { width: 90 });
+      doc.text("TOTAL", startX + 90, headerY, { width: 42, align: "right" });
+      doc.text("DC", startX + 132, headerY, { width: 35, align: "right" });
+      doc.text("PD", startX + 167, headerY, { width: 43, align: "right" });
       doc.moveDown(0.3);
       drawDashedLine();
 
       if (orders && orders.length > 0) {
         orders.forEach((o) => {
           const rowY = doc.y;
-          const tName = (o.ticketName || `${o.orderNumber || ""} ${o.customerName || ""}`).trim().slice(0, 16);
-          doc.font("Courier").fontSize(7.5);
-          doc.text(tName, startX, rowY, { width: 95 });
-          doc.text(fmt(o.total), startX + 95, rowY, { width: 40, align: "right" });
-          doc.text(fmt(o.dc || 6.0), startX + 135, rowY, { width: 35, align: "right" });
-          doc.text(o.pd || "PP", startX + 170, rowY, { width: 40, align: "right" });
+          const tName = (o.ticketName || `${o.orderNumber || ""} ${o.customerName || ""}`).trim().slice(0, 15);
+          doc.font("Courier").fontSize(8);
+          doc.text(tName, startX, rowY, { width: 90 });
+          doc.text(fmt(o.total), startX + 90, rowY, { width: 42, align: "right" });
+          doc.text(fmt(o.dc || 6.0), startX + 132, rowY, { width: 35, align: "right" });
+          doc.text(o.pd || "PP", startX + 167, rowY, { width: 43, align: "right" });
           doc.moveDown(0.25);
         });
       } else {
-        doc.font("Courier-Oblique").fontSize(7.5).text("No orders delivered", startX, doc.y, { align: "center", width: printableWidth });
+        doc.font("Courier-Oblique").fontSize(8).text("No orders delivered in this shift", startX, doc.y, { align: "center", width: printableWidth });
         doc.moveDown(0.3);
       }
       drawDashedLine();
 
       // Employee Sales Summary
-      doc.font("Courier-Bold").fontSize(8.5).text("------- Employee Sales Summary -------", startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier-Bold").fontSize(9.5).text("------- Employee Sales Summary -------", startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.3);
 
       drawRow("Total Orders.....:", String(totalOrders));
@@ -158,7 +168,7 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement
       drawRow("(Total Commission Due:", `${fmt(totalCommissionDue)})`, true);
       doc.moveDown(0.5);
 
-      doc.font("Courier").fontSize(7.5).text("Printed for Driver Drop Reconciliation", startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier").fontSize(8).text("Printed for Driver Drop Reconciliation", startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(1.5);
     }
 
@@ -169,16 +179,16 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement
       }
 
       drawAsteriskLine();
-      doc.font("Courier-Bold").fontSize(8.5);
+      doc.font("Courier-Bold").fontSize(9.5);
       doc.text(`**      Driver Earning Report         **`, startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
 
-      doc.font("Courier-Bold").fontSize(8.5);
+      doc.font("Courier-Bold").fontSize(9.5);
       doc.text(`**               ${driverName.toUpperCase()}                  **`, startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
 
-      doc.font("Courier").fontSize(8);
-      doc.text(`**        ${formattedDate} ${formattedTime}         **`, startX, doc.y, { align: "center", width: printableWidth });
+      doc.font("Courier").fontSize(8.5);
+      doc.text(`**    SHIFT ${shiftNumber} - ${formattedDate} ${formattedTime}    **`, startX, doc.y, { align: "center", width: printableWidth });
       doc.moveDown(0.2);
       drawAsteriskLine();
       doc.moveDown(0.4);
@@ -201,16 +211,16 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement
       // GRAND TOTAL
       doc.moveDown(0.2);
       const totalRowY = doc.y;
-      doc.font("Courier-Bold").fontSize(9.5);
+      doc.font("Courier-Bold").fontSize(10.5);
       doc.text("Total Driver Earning", startX, totalRowY);
-      doc.text(`$${fmt(totalDriverEarning)}`, startX + 130, totalRowY, { width: 80, align: "right" });
+      doc.text(`$${fmt(totalDriverEarning)}`, startX + 120, totalRowY, { width: 90, align: "right" });
       doc.moveDown(0.3);
       drawDoubleLine();
       doc.moveDown(0.6);
 
-      doc.font("Courier").fontSize(8).text("I have received the above amount in cash.", startX, doc.y);
+      doc.font("Courier").fontSize(8.5).text("I have received the above amount in cash.", startX, doc.y);
       doc.moveDown(1.2);
-      doc.font("Courier").fontSize(8).text("Signature: __________________________", startX, doc.y);
+      doc.font("Courier").fontSize(8.5).text("Signature: __________________________", startX, doc.y);
       doc.moveDown(0.8);
       drawAsteriskLine();
     }
@@ -218,8 +228,9 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", settlement
     doc.end();
   } catch (error) {
     logger.error(`Error generating driver drop PDF: ${error.message}`);
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, message: "Failed to generate driver drop PDF" });
+    if (outputStream && typeof outputStream.headersSent !== "undefined" && !outputStream.headersSent) {
+      outputStream.status(500).json({ success: false, message: "Failed to generate driver drop PDF" });
     }
   }
 };
+

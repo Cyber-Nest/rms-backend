@@ -45,6 +45,10 @@ const driverDropSettlementSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    shiftNumber: {
+      type: Number,
+      default: 1,
+    },
     orders: {
       type: [settledOrderSchema],
       default: [],
@@ -85,10 +89,15 @@ const driverDropSettlementSchema = new mongoose.Schema(
 );
 
 driverDropSettlementSchema.index(
-  { branchId: 1, date: 1, driverId: 1 },
+  { branchId: 1, date: 1, driverId: 1, shiftNumber: 1 },
   { unique: true }
 );
 
 driverDropSettlementSchema.index({ branchId: 1, date: 1 });
 
-module.exports = mongoose.model("DriverDropSettlement", driverDropSettlementSchema);
+const DriverDropSettlement = mongoose.model("DriverDropSettlement", driverDropSettlementSchema);
+
+// Auto-drop stale unique index branchId_1_date_1_driverId_1 if it exists in MongoDB
+DriverDropSettlement.collection.dropIndex("branchId_1_date_1_driverId_1").catch(() => {});
+
+module.exports = DriverDropSettlement;
