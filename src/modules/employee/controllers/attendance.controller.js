@@ -14,8 +14,8 @@ const getBranchIdFromReq = (req) => {
 exports.checkIn = async (req, res) => {
   try {
     const branchId = getBranchIdFromReq(req);
-    const { employeeId } = req.body;
-    const data = await attendanceService.checkIn(branchId, employeeId);
+    const { employeeId, managerPin } = req.body;
+    const data = await attendanceService.checkIn(branchId, employeeId, managerPin);
     res.status(200).json({
       success: true,
       message: "Checked in successfully",
@@ -117,6 +117,57 @@ exports.getEmployeeAttendanceHistory = async (req, res) => {
     });
   } catch (error) {
     logger.error(`Error fetching employee attendance history: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.getAttendanceReport = async (req, res) => {
+  try {
+    const branchId = getBranchIdFromReq(req);
+    const { startDate, endDate, employeeId, role } = req.query;
+
+    const data = await attendanceService.getAttendanceReport(branchId, {
+      startDate,
+      endDate,
+      employeeId,
+      role,
+    });
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    logger.error(`Error fetching attendance report: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.editAttendanceShift = async (req, res) => {
+  try {
+    const branchId = getBranchIdFromReq(req);
+    const { attendanceId, shiftId, checkIn, checkOut, breaks } = req.body;
+
+    const data = await attendanceService.editAttendanceShift(branchId, {
+      attendanceId,
+      shiftId,
+      checkIn,
+      checkOut,
+      breaks,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Shift updated successfully",
+      data,
+    });
+  } catch (error) {
+    logger.error(`Error editing attendance shift: ${error.message}`);
     res.status(400).json({
       success: false,
       message: error.message,

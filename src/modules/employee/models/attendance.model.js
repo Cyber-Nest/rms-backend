@@ -14,6 +14,14 @@ const breakSchema = new mongoose.Schema(
   { _id: true }
 );
 
+const managerOverrideBySchema = new mongoose.Schema(
+  {
+    name: { type: String, default: "" },
+    employeeId: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 const shiftSchema = new mongoose.Schema(
   {
     checkIn: {
@@ -32,6 +40,35 @@ const shiftSchema = new mongoose.Schema(
     totalBreakMinutes: {
       type: Number,
       default: 0,
+    },
+    // ── Schedule-Aware Check-In Fields ──
+    scheduledShiftStart: {
+      type: String, // e.g. "09:00"
+      default: "",
+    },
+    scheduledShiftEnd: {
+      type: String, // e.g. "17:00"
+      default: "",
+    },
+    autoCheckoutGraceTime: {
+      type: Date,  // Scheduled end + 2 min — triggers auto-checkout sweeper
+      default: null,
+    },
+    autoCheckedOut: {
+      type: Boolean,
+      default: false,
+    },
+    managerOverride: {
+      type: Boolean,
+      default: false,
+    },
+    managerOverrideBy: {
+      type: managerOverrideBySchema,
+      default: () => ({ name: "", employeeId: "" }),
+    },
+    notes: {
+      type: String,
+      default: "",
     },
   },
   { _id: true }
