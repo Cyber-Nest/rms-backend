@@ -1288,21 +1288,63 @@ exports.unassignDriver = async (req, res) => {
 
     const assignment = await DeliveryAssignment.findOne({
       orderId,
-      status: { $in: ["assigned", "en-route"] },
+      status: { $in: ["assigned", "en-route", "delivered", "completed"] },
     });
 
     if (!assignment) {
       return res.status(404).json({
         success: false,
-        message: "No active assignment found for this order.",
+        message: "No assignment found for this order.",
       });
     }
 
     const driverId = assignment.driverId;
     const restaurantId = assignment.restaurantId || "default";
 
+    // Delete assignment
     await DeliveryAssignment.deleteOne({ _id: assignment._id });
 
+    // If the order itself was marked completed or delivered, reset status back to 'ready'
+    const targetOrder = await Order.findById(orderId);
+    if (targetOrder && (targetOrder.status === "completed" || targetOrder.status === "delivered")) {
+      targetOrder.status = "ready";
+      await targetOrder.save();
+    }
+
+    // Clean up DriverDropSettlement if order was already included
+    try {
+      const settlements = await DriverDropSettlement.find({ "orders.orderId": orderId });
+      for (const st of settlements) {
+        st.orders = st.orders.filter(
+          (o) => o.orderId && o.orderId.toString() !== orderId.toString()
+        );
+        st.totalOrders = st.orders.length;
+        st.totalSales = st.orders.reduce((sum, o) => sum + (o.total || 0), 0);
+        st.cashSales = st.orders
+          .filter((o) => o.pd === "CS")
+          .reduce((sum, o) => sum + (o.total || 0), 0);
+        st.prepaidSales = st.orders
+          .filter((o) => o.pd === "PP")
+          .reduce((sum, o) => sum + (o.total || 0), 0);
+        st.terminalSales = st.orders
+          .filter((o) => o.pd === "TM")
+          .reduce((sum, o) => sum + (o.total || 0), 0);
+        st.totalTipsEarned = st.orders.reduce(
+          (sum, o) => sum + (o.prepaidTip || 0) + (o.terminalTip || 0),
+          0
+        );
+        st.driverTotalCommission =
+          (st.driverBaseCommission || 0) + (st.additionalCommission || 0);
+        st.totalDriverEarning = st.driverTotalCommission + st.totalTipsEarned;
+        st.saleDue = st.cashSales;
+        st.netCashPayoutToDriver = st.totalDriverEarning - st.saleDue;
+        await st.save();
+      }
+    } catch (err) {
+      logger.warn(`Could not clean up DriverDropSettlement on unassign: ${err.message}`);
+    }
+
+    // Update driver state
     const driver = await Driver.findById(driverId);
     if (driver) {
       driver.activeOrderIds = driver.activeOrderIds.filter(
@@ -1313,21 +1355,16 @@ exports.unassignDriver = async (req, res) => {
       }
       await driver.save();
 
+      // Trigger status change Pusher event
       await triggerDriverStatusChange(restaurantId, {
         driverId: driver._id.toString(),
         status: driver.status,
       });
     }
 
+    // Trigger Pusher event to update branch delivery dashboard
     const pusher = require("../../../config/pusher");
     if (pusher.pusherInstance) {
-      pusher.pusherInstance.trigger(
-        `private-order-${orderId}`,
-        "delivery-unassigned",
-        {
-          orderId,
-        },
-      );
       pusher.pusherInstance.trigger(
         `private-restaurant-${restaurantId}`,
         "delivery-assigned",
