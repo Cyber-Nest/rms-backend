@@ -26,6 +26,7 @@ router.get("/track/:orderId", deliveryController.trackDelivery);
 // Driver App Routes — openCors applied so driver-web can call ANY restaurant's backend
 router.options("/driver/verify-qr", openCors);
 router.options("/driver/login", openCors);
+router.options("/driver/location", openCors);
 router.options("/driver/:id", openCors);
 router.options("/driver/:id/assignments", openCors);
 router.options("/driver/deliver/:assignmentId", openCors);
@@ -33,6 +34,7 @@ router.options("/driver/complete/:assignmentId", openCors);
 router.options("/driver/:id/status", openCors);
 
 router.post("/driver/login", openCors, driverLoginLimiter, deliveryController.driverLogin);
+router.post("/driver/location", openCors, protectDriver, deliveryController.updateDriverLocation);
 router.get("/driver/:id", openCors, protectDriver, deliveryController.getDriverById);
 router.get("/driver/:id/assignments", openCors, protectDriver, deliveryController.getDriverAssignments);
 router.patch("/driver/deliver/:assignmentId", openCors, protectDriver, deliveryController.markDelivered);

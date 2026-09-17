@@ -2306,3 +2306,166 @@ exports.generateBranchQrToken = async (req, res) => {
     handleError(res, error, 500);
   }
 };
+
+/**
+ * Calculates distance in meters between two GPS coordinates using Haversine formula
+ */
+function calculateHaversineMeters(lat1, lon1, lat2, lon2) {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * POST: Driver location update handler with auto 100m customer deliver & 150m base return checks
+ * Body: { driverId, lat, lng, bearing, speed }
+ */
+exports.updateDriverLocation = async (req, res) => {
+  try {
+    const { driverId, lat, lng, bearing, speed } = req.body;
+    if (!driverId || lat === undefined || lng === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "driverId, lat, and lng are required.",
+      });
+    }
+
+    const driver = await Driver.findById(driverId);
+    if (!driver) {
+      return res.status(404).json({ success: false, message: "Driver not found." });
+    }
+
+    driver.currentLocation = { lat: Number(lat), lng: Number(lng) };
+    await driver.save();
+
+    const numLat = Number(lat);
+    const numLng = Number(lng);
+
+    // 1. Customer Proximity Check (100 Meters)
+    if (driver.status === "on-delivery" || driver.status === "returning") {
+      const activeAssignments = await DeliveryAssignment.find({
+        driverId: driver._id,
+        status: { $in: ["assigned", "en-route"] },
+      });
+
+      for (const assignment of activeAssignments) {
+        const custLat = assignment.customerLocation?.lat;
+        const custLng = assignment.customerLocation?.lng;
+
+        if (custLat && custLng) {
+          const distMeters = calculateHaversineMeters(numLat, numLng, custLat, custLng);
+          if (distMeters <= 100) {
+            assignment.status = "delivered";
+            assignment.deliveredAt = new Date();
+            await assignment.save();
+
+            const order = await Order.findByIdAndUpdate(
+              assignment.orderId,
+              {
+                status: "completed",
+                $push: {
+                  statusHistory: {
+                    status: "completed",
+                    changedAt: new Date(),
+                    note: "Auto-Delivered (Driver within 100m of customer address)",
+                  },
+                },
+              },
+              { new: true }
+            );
+
+            driver.activeOrderIds = driver.activeOrderIds.filter(
+              (oid) => oid.toString() !== assignment.orderId.toString()
+            );
+            if (driver.activeOrderIds.length === 0) {
+              driver.status = "returning";
+            }
+            await driver.save();
+
+            await triggerDeliveryStatusUpdate(
+              assignment.restaurantId,
+              assignment.orderId.toString(),
+              {
+                status: "delivered",
+                driverId: assignment.driverId.toString(),
+              }
+            );
+
+            if (order) await triggerOrderUpdated(order);
+
+            if (driver.activeOrderIds.length === 0) {
+              await triggerDriverStatusChange(assignment.restaurantId, {
+                driverId: driver._id.toString(),
+                status: "returning",
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Restaurant Base Return Proximity Check (150 Meters)
+    if (driver.status === "returning") {
+      try {
+        const Branch = require("../../branch/models/branch.model");
+        const branch = await Branch.findById(driver.restaurantId).lean();
+        const restLat = branch?.lat ? Number(branch.lat) : null;
+        const restLng = branch?.lng ? Number(branch.lng) : null;
+
+        if (restLat && restLng) {
+          const distRestMeters = calculateHaversineMeters(numLat, numLng, restLat, restLng);
+          if (distRestMeters <= 150) {
+            await DeliveryAssignment.updateMany(
+              { driverId: driver._id, status: "delivered" },
+              { $set: { status: "completed", completedAt: new Date() } }
+            );
+
+            driver.status = driver.isDutyOnline ? "available" : "offline";
+            driver.activeOrderIds = [];
+            await driver.save();
+
+            await triggerDriverStatusChange(driver.restaurantId, {
+              driverId: driver._id.toString(),
+              status: driver.status,
+            });
+          }
+        }
+      } catch (e) {
+        logger.warn(`Error checking restaurant base proximity: ${e.message}`);
+      }
+    }
+
+    // Broadcast location to Pusher channel (restaurant channel for POS board & order channels for customer tracking maps)
+    const pusher = require("../../../config/pusher");
+    if (pusher.pusherInstance) {
+      const payload = { driverId, lat: numLat, lng: numLng, bearing, speed };
+      pusher.pusherInstance.trigger(
+        `private-restaurant-${driver.restaurantId}`,
+        "client-driver-location",
+        payload
+      );
+      if (driver.activeOrderIds && driver.activeOrderIds.length > 0) {
+        driver.activeOrderIds.forEach((orderId) => {
+          pusher.pusherInstance.trigger(
+            `private-order-${orderId.toString()}`,
+            "client-driver-location",
+            payload
+          );
+        });
+      }
+    }
+
+    res.status(200).json({ success: true, message: "Location updated successfully." });
+  } catch (error) {
+    handleError(res, error, 500);
+  }
+};
