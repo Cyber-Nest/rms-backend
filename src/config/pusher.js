@@ -194,6 +194,27 @@ const triggerDriverStatusChange = async (restaurantId, driverData) => {
   }
 };
 
+const triggerAttendanceUpdated = async (branchId, data) => {
+  if (!pusherInstance) {
+    logger.debug("Pusher is not initialized, skipping attendance-updated trigger.");
+    return;
+  }
+  if (!branchId) return;
+
+  try {
+    const channel = `attendance-${branchId.toString()}`;
+    await pusherInstance.trigger(channel, "attendance-updated", {
+      employeeId: data.employeeId || null,
+      status: data.status || "updated",
+      date: data.date || null,
+      timestamp: new Date().toISOString(),
+    });
+    logger.info(`Pusher 'attendance-updated' triggered on [${channel}]`);
+  } catch (error) {
+    logger.error(`Failed to trigger attendance-updated: ${error.message}`);
+  }
+};
+
 const triggerPrintJob = async (branchId, jobPayload) => {
   if (!pusherInstance) {
     logger.debug("Pusher is not initialized, skipping print-job trigger.");
@@ -224,4 +245,5 @@ module.exports = {
   triggerDeliveryStatusUpdate,
   triggerDriverStatusChange,
   triggerPrintJob,
+  triggerAttendanceUpdated,
 };
