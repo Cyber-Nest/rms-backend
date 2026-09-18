@@ -50,14 +50,24 @@ exports.generateReceiptPdf = async (order, res) => {
     h += lineH * 5 + 10; // Order #, Date, Status, Type, Taken By
 
     const c = order.customer;
+    const driverNotesText = (c?.driverNotes || order.driverNotes || "").trim();
+    const orderNotesText = (order.notes || order.orderNotes || order.specialInstructions || "").trim();
+
     const hasValidCustomer =
-      c &&
-      ((c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") ||
-        (c.phone && c.phone.trim() !== "") ||
-        (c.address && c.address.trim() !== "") ||
-        (c.driverNotes && c.driverNotes.trim() !== ""));
+      (c &&
+        ((c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") ||
+          (c.phone && c.phone.trim() !== "") ||
+          (c.address && c.address.trim() !== ""))) ||
+      driverNotesText !== "";
     if (hasValidCustomer) {
       h += lineH * 4 + 10;
+      if (driverNotesText !== "") {
+        h += lineH + 4;
+      }
+    }
+
+    if (orderNotesText !== "") {
+      h += lineH * 3 + 12;
     }
 
     h += lineH * 2 + 10; // Items Header
@@ -243,20 +253,47 @@ exports.generateReceiptPdf = async (order, res) => {
         .text("CUSTOMER DETAILS", startX, doc.y, { align: "left", width: printableWidth });
       doc.moveDown(0.2);
       doc.font("Helvetica-Bold").fontSize(10.5);
-      if (c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") {
+      if (c && c.name && c.name.trim() !== "" && c.name.trim() !== "No Name") {
         doc.text(`Name : ${c.name}`, startX, doc.y);
       }
-      if (c.phone && c.phone.trim() !== "") {
+      if (c && c.phone && c.phone.trim() !== "") {
         doc.text(`Phone : ${c.phone}`, startX, doc.y);
       }
-      if (c.address && c.address.trim() !== "") {
+      if (c && c.address && c.address.trim() !== "") {
         const fullAddr = `${c.address}${c.postalCode ? `, ${c.postalCode}` : ""}`;
         doc.text(`Address : ${fullAddr}`, startX, doc.y);
       }
-      if (c.driverNotes && c.driverNotes.trim() !== "") {
-        doc.text(`Driver Notes : ${c.driverNotes}`, startX, doc.y);
+      if (driverNotesText !== "") {
+        doc.text(`Driver Notes : ${driverNotesText}`, startX, doc.y);
       }
       doc.moveDown(0.4);
+    }
+
+    // Customer / Order Notes Block
+    if (orderNotesText !== "") {
+      const notesBoxStartY = doc.y;
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .text("NOTE / ORDER INSTRUCTIONS:", startX + 2, notesBoxStartY + 4, {
+          align: "center",
+          width: printableWidth - 4,
+          underline: true,
+        });
+      doc.moveDown(0.2);
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(10.5)
+        .text(`"${orderNotesText}"`, startX + 2, doc.y, {
+          align: "center",
+          width: printableWidth - 4,
+        });
+      const notesBoxEndY = doc.y + 4;
+
+      doc
+        .rect(startX, notesBoxStartY, printableWidth, notesBoxEndY - notesBoxStartY)
+        .stroke("#000000");
+      doc.y = notesBoxEndY + 8;
     }
 
     // 3. Items Table Header
