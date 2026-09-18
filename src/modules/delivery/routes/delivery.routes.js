@@ -50,6 +50,7 @@ router.put("/vehicles/:id", protectBranch, enforceBranch, deliveryController.upd
 router.delete("/vehicles/:id", protectBranch, enforceBranch, deliveryController.deleteVehicle);
 router.post("/assign", protectBranch, enforceBranch, deliveryController.assignDriver);
 router.post("/unassign", protectBranch, enforceBranch, deliveryController.unassignDriver);
+router.post("/deliver", protectBranch, enforceBranch, deliveryController.markDeliveredByBranch);
 router.post("/vehicles/assign", protectBranch, enforceBranch, deliveryController.assignVehicle);
 router.delete("/vehicles/unassign/:driverId", protectBranch, enforceBranch, deliveryController.unassignVehicle);
 router.post("/driver/:driverId/complete-active", protectBranch, enforceBranch, deliveryController.completeActiveAssignment);
