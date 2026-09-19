@@ -777,10 +777,23 @@ exports.getSalesSummary = async (filters = {}) => {
       expQuery.expenseDate = { $gte: start, $lte: end };
     }
 
-    const dropQuery = {
-      ...(filters.branchId ? { branchId: filters.branchId } : {}),
-      date: targetDateStr,
-    };
+    const dropQuery = { date: targetDateStr };
+    const depositQuery = { date: targetDateStr };
+    if (filters.branchId) {
+      if (mongoose.Types.ObjectId.isValid(filters.branchId)) {
+        dropQuery.$or = [
+          { branchId: new mongoose.Types.ObjectId(filters.branchId) },
+          { branchId: filters.branchId },
+        ];
+        depositQuery.$or = [
+          { branchId: new mongoose.Types.ObjectId(filters.branchId) },
+          { branchId: filters.branchId },
+        ];
+      } else {
+        dropQuery.branchId = filters.branchId;
+        depositQuery.branchId = filters.branchId;
+      }
+    }
 
     const [
       orders,
@@ -794,7 +807,7 @@ exports.getSalesSummary = async (filters = {}) => {
           "status tip total subtotal tax discount orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod",
         )
         .lean(),
-      Deposit.findOne({ date: targetDateStr }).lean(),
+      Deposit.findOne(depositQuery).lean(),
       Expense.find(expQuery)
         .select("paymentMode amount expenseType employeeName pst gst hst")
         .lean()
@@ -1053,6 +1066,7 @@ exports.getSalesSummary = async (filters = {}) => {
       },
       driverReport: (driverSettlements || []).map((ds) => ({
         driverName: ds.driverName,
+        shiftNumber: ds.shiftNumber || 1,
         deliveryCount: ds.totalOrders,
         prepaidSales: round2(ds.prepaidSales),
         cashSales: round2(ds.cashSales),
