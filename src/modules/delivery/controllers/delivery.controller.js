@@ -287,9 +287,10 @@ exports.getDrivers = async (req, res) => {
         driverCheckedInMap.get(String(driver.driverId).toUpperCase()) ||
         false;
 
-      const isBusy = driver.status === "on-delivery" || driver.status === "returning";
+      const hasActiveOrders = driver.activeOrderIds && driver.activeOrderIds.length > 0;
+      const isBusy = driver.status === "on-delivery" || driver.status === "returning" || hasActiveOrders;
       const computedStatus = isBusy
-        ? driver.status
+        ? (driver.status === "returning" ? "returning" : "on-delivery")
         : Boolean(driver.isDutyOnline)
         ? "available"
         : "offline";
@@ -546,12 +547,10 @@ exports.assignDriver = async (req, res) => {
       restaurantId: driver.restaurantId,
     });
 
-    if (driver.isDutyOnline) {
-      driver.status = "on-delivery";
-    } else {
-      driver.status = "offline";
+    driver.status = "on-delivery";
+    if (!driver.activeOrderIds.includes(orderId)) {
+      driver.activeOrderIds.push(orderId);
     }
-    driver.activeOrderIds.push(orderId);
     await driver.save();
 
     const vehicle = await Vehicle.findById(driver.assignedVehicleId).lean();

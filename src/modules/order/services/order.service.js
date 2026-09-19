@@ -28,33 +28,47 @@ const round2 = (num) => {
 };
 
 const buildDateFilter = (start, end, baseFilter = {}) => {
-  const normBase = { ...baseFilter };
-  if (
-    normBase.branchId &&
-    typeof normBase.branchId === "string" &&
-    mongoose.Types.ObjectId.isValid(normBase.branchId)
-  ) {
-    normBase.branchId = new mongoose.Types.ObjectId(normBase.branchId);
+  const query = {};
+  if (baseFilter.branchId) {
+    if (mongoose.Types.ObjectId.isValid(baseFilter.branchId)) {
+      query.$or = [
+        { branchId: new mongoose.Types.ObjectId(baseFilter.branchId) },
+        { branchId: String(baseFilter.branchId) },
+      ];
+    } else {
+      query.branchId = baseFilter.branchId;
+    }
   }
-  const query = { ...normBase };
+
+  const dateOr = [];
   if (start && end) {
-    query.$or = [
+    dateOr.push(
       { businessDate: { $gte: start, $lte: end } },
       { businessDate: { $exists: false }, createdAt: { $gte: start, $lte: end } },
-      { businessDate: null, createdAt: { $gte: start, $lte: end } },
-    ];
+      { businessDate: null, createdAt: { $gte: start, $lte: end } }
+    );
   } else if (start) {
-    query.$or = [
+    dateOr.push(
       { businessDate: { $gte: start } },
       { businessDate: { $exists: false }, createdAt: { $gte: start } },
-      { businessDate: null, createdAt: { $gte: start } },
-    ];
+      { businessDate: null, createdAt: { $gte: start } }
+    );
   } else if (end) {
-    query.$or = [
+    dateOr.push(
       { businessDate: { $lte: end } },
       { businessDate: { $exists: false }, createdAt: { $lte: end } },
-      { businessDate: null, createdAt: { $lte: end } },
-    ];
+      { businessDate: null, createdAt: { $lte: end } }
+    );
+  }
+
+  if (dateOr.length > 0) {
+    if (query.$or) {
+      return {
+        $and: [{ $or: query.$or }, { $or: dateOr }],
+      };
+    } else {
+      query.$or = dateOr;
+    }
   }
   return query;
 };
@@ -2047,6 +2061,17 @@ exports.getMonthlySalesSummary = async ({
     const baseFilter = branchId ? { branchId } : {};
     const dateFilter = buildDateFilter(start, end, baseFilter);
 
+    const branchOrQuery = branchId
+      ? mongoose.Types.ObjectId.isValid(branchId)
+        ? {
+            $or: [
+              { branchId: new mongoose.Types.ObjectId(branchId) },
+              { branchId: String(branchId) },
+            ],
+          }
+        : { branchId }
+      : {};
+
     const [ordersByDayAgg, expensesRaw, depositsRaw] = await Promise.all([
       Order.aggregate([
         { $match: dateFilter },
@@ -2065,24 +2090,11 @@ exports.getMonthlySalesSummary = async ({
           $group: {
             _id: { date: "$businessDateStr", status: "$status" },
             count: { $sum: 1 },
-            subtotal: { $sum: "$subtotal" },
-            tax: { $sum: "$tax" },
-            discount: { $sum: "$discount" },
+            subtotal: { $sum: { $ifNull: ["$subtotal", 0] } },
+            tax: { $sum: { $ifNull: ["$tax", 0] } },
+            discount: { $sum: { $ifNull: ["$discount", 0] } },
+            deliveryFee: { $sum: { $ifNull: ["$deliveryFee", 0] } },
             total: { $sum: "$total" },
-            cashTotal: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$status", "cancelled"] },
-                      { $in: ["$orderSource", ["pos"]] },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
             takeoutTotal: {
               $sum: {
                 $cond: [
@@ -2197,15 +2209,49 @@ exports.getMonthlySalesSummary = async ({
                 ],
               },
             },
+            refundCount: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ["$paymentStatus", "refunded"] },
+                      { $eq: ["$status", "refunded"] },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+            refundAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ["$paymentStatus", "refunded"] },
+                      { $eq: ["$status", "refunded"] },
+                    ],
+                  },
+                  "$total",
+                  0,
+                ],
+              },
+            },
             orders: {
               $push: {
                 total: "$total",
+                subtotal: "$subtotal",
+                tax: "$tax",
+                deliveryFee: "$deliveryFee",
                 payments: "$payments",
                 orderSource: "$orderSource",
+                orderType: "$orderType",
                 status: "$status",
+                paymentStatus: "$paymentStatus",
                 discount: "$discount",
                 discountType: "$discountType",
                 promoCode: "$promoCode",
+                tip: "$tip",
               },
             },
           },
@@ -2213,14 +2259,14 @@ exports.getMonthlySalesSummary = async ({
       ]),
       Expense.find({
         expenseDate: { $gte: start, $lte: end },
-        ...(branchId ? { branchId } : {}),
+        ...branchOrQuery,
       }).lean(),
       Deposit.find({
         date: {
           $gte: startDate || getLocalDateStr(start),
           $lte: endDate || getLocalDateStr(end),
         },
-        ...(branchId ? { branchId } : {}),
+        ...branchOrQuery,
       }).lean(),
     ]);
 
@@ -2233,19 +2279,30 @@ exports.getMonthlySalesSummary = async ({
           subtotal: 0,
           tax: 0,
           discount: 0,
+          deliveryFee: 0,
           total: 0,
           takeout: 0,
           dineIn: 0,
           delivery: 0,
           driveThrough: 0,
-          online: 0,
-          pos: 0,
           completedCount: 0,
           paidCancelledCount: 0,
           unpaidCancelledCount: 0,
+          refundCount: 0,
+          refundAmount: 0,
           cashSales: 0,
           cardSales: 0,
           accountPaySales: 0,
+          amexSales: 0,
+          interacSales: 0,
+          mastercardSales: 0,
+          visaSales: 0,
+          websiteSales: 0,
+          uberSales: 0,
+          skipSales: 0,
+          doordashSales: 0,
+          posSales: 0,
+          tips: 0,
           orders: [],
         });
       }
@@ -2255,14 +2312,15 @@ exports.getMonthlySalesSummary = async ({
         day.subtotal += row.subtotal;
         day.tax += row.tax;
         day.discount += row.discount;
+        day.deliveryFee += row.deliveryFee;
         day.total += row.total;
         day.takeout += row.takeoutTotal;
         day.dineIn += row.dineInTotal;
         day.delivery += row.deliveryTotal;
         day.driveThrough += row.driveThroughTotal;
-        day.online += row.onlineTotal;
-        day.pos += row.posTotal;
         if (row._id.status === "completed") day.completedCount += row.count;
+        day.refundCount += row.refundCount || 0;
+        day.refundAmount += row.refundAmount || 0;
         day.orders.push(...row.orders);
       } else {
         day.paidCancelledCount += row.paidCancelled;
@@ -2273,11 +2331,23 @@ exports.getMonthlySalesSummary = async ({
     for (const [, day] of dayDataMap) {
       let cashSales = 0,
         cardSales = 0,
-        accountPaySales = 0;
+        accountPaySales = 0,
+        actualTips = 0;
+      let amexSales = 0,
+        interacSales = 0,
+        mastercardSales = 0,
+        visaSales = 0;
+      let websiteSales = 0,
+        uberSales = 0,
+        skipSales = 0,
+        doordashSales = 0,
+        posSales = 0;
+
       const promoMap = new Map();
 
       for (const o of day.orders) {
         if (o.status === "cancelled") continue;
+        if (o.tip) actualTips += Number(o.tip) || 0;
 
         if (o.promoCode) {
           const codeKey = String(o.promoCode).toUpperCase();
@@ -2289,25 +2359,78 @@ exports.getMonthlySalesSummary = async ({
           pData.totalDiscount += Number(o.discount || 0);
         }
 
+        // Online vs POS tracking
+        const src = (o.orderSource || "pos").toLowerCase();
+        if (src === "pos") {
+          posSales += o.total || 0;
+        } else if (src === "ubereats" || src === "uber") {
+          uberSales += o.total || 0;
+        } else if (src === "skip") {
+          skipSales += o.total || 0;
+        } else if (src === "doordash") {
+          doordashSales += o.total || 0;
+        } else {
+          websiteSales += o.total || 0;
+        }
+
+        // Payment method and card brand breakdown
         const orderPayments =
           o.payments && o.payments.length > 0
             ? o.payments
-            : [{ method: "cash", amount: o.total || 0 }];
+            : [{ method: src === "pos" ? "cash" : "card", amount: o.total || 0 }];
+
         for (const p of orderPayments) {
-          const method = p.method ? p.method.toLowerCase() : "cash";
-          if (method === "cash") cashSales += p.amount;
-          else if (
-            method === "credit" ||
-            method === "card" ||
-            method === "debit"
-          )
-            cardSales += p.amount;
-          else accountPaySales += p.amount;
+          const method = (p.method || "cash").toLowerCase();
+          const brand = (p.cardBrand || "").toLowerCase();
+          const amt = p.amount || 0;
+
+          if (method === "cash") {
+            cashSales += amt;
+          } else if (method === "credit" || method === "card" || method === "debit") {
+            cardSales += amt;
+            if (brand.includes("amex") || brand.includes("american")) {
+              amexSales += amt;
+            } else if (brand.includes("interac")) {
+              interacSales += amt;
+            } else if (brand.includes("master")) {
+              mastercardSales += amt;
+            } else if (brand.includes("visa")) {
+              visaSales += amt;
+            } else {
+              // Unspecified card brand:
+              if (method === "debit") {
+                interacSales += amt;
+              } else {
+                // Split evenly between Visa and Mastercard, leave AMEX 0
+                visaSales += amt * 0.5;
+                mastercardSales += amt * 0.5;
+              }
+            }
+          } else {
+            accountPaySales += amt;
+          }
         }
       }
+
       day.cashSales = cashSales;
       day.cardSales = cardSales;
       day.accountPaySales = accountPaySales;
+      day.amexSales = amexSales;
+      day.interacSales = interacSales;
+      day.mastercardSales = mastercardSales;
+      day.visaSales = visaSales;
+      day.websiteSales = websiteSales;
+      day.uberSales = uberSales;
+      day.skipSales = skipSales;
+      day.doordashSales = doordashSales;
+      day.posSales = posSales;
+      day.tips = round2(actualTips);
+
+      // If subtotal was 0, calculate subtotal cleanly
+      if (day.subtotal === 0 && day.total > 0) {
+        day.subtotal = round2(day.total - day.tax - day.deliveryFee + day.discount);
+      }
+
       day.promoSummary = Array.from(promoMap.values()).map((p) => ({
         code: p.code,
         count: p.count,
@@ -2346,19 +2469,30 @@ exports.getMonthlySalesSummary = async ({
         subtotal: 0,
         tax: 0,
         discount: 0,
+        deliveryFee: 0,
         total: 0,
         takeout: 0,
         dineIn: 0,
         delivery: 0,
         driveThrough: 0,
-        online: 0,
-        pos: 0,
         completedCount: 0,
         paidCancelledCount: 0,
         unpaidCancelledCount: 0,
+        refundCount: 0,
+        refundAmount: 0,
         cashSales: 0,
         cardSales: 0,
         accountPaySales: 0,
+        amexSales: 0,
+        interacSales: 0,
+        mastercardSales: 0,
+        visaSales: 0,
+        websiteSales: 0,
+        uberSales: 0,
+        skipSales: 0,
+        doordashSales: 0,
+        posSales: 0,
+        tips: 0,
       };
       const dayExpenses = expenseMap.get(dateStr) || [];
       const dayDeposit = depositMap.get(dateStr) || {
@@ -2368,18 +2502,15 @@ exports.getMonthlySalesSummary = async ({
       };
 
       const grandTotal = day.total;
-      const tips = grandTotal > 0 ? round2(grandTotal * 0.02) : 0;
+      const tips = day.tips > 0 ? day.tips : grandTotal > 0 ? round2(grandTotal * 0.02) : 0;
       const finalAmount = round2(grandTotal + tips);
 
-      const debitCardSales = round2(day.cardSales * 0.4);
-      const creditCardSales = round2(day.cardSales * 0.6);
       const finalCashSales = round2(day.cashSales);
       const finalAccountPaySales = round2(day.accountPaySales);
+      const debitCardSales = round2(day.interacSales);
+      const creditCardSales = round2(day.cardSales - day.interacSales);
       const paymentGrandTotal = round2(
-        finalCashSales +
-          debitCardSales +
-          creditCardSales +
-          finalAccountPaySales,
+        finalCashSales + day.cardSales + finalAccountPaySales,
       );
 
       const debitTips = round2(tips * 0.4);
@@ -2393,13 +2524,10 @@ exports.getMonthlySalesSummary = async ({
       );
 
       const gst = round2(day.tax);
-      const amexFinalAmount = round2(creditCardSales * 0.1);
-      const interacFinalAmount = round2(debitCardSales);
-      const mastercardFinalAmount = round2(creditCardSales * 0.4);
-      const visaFinalAmount = round2(creditCardSales * 0.5);
-
-      const onlineTotal = round2(day.online);
-      const posTotal = round2(day.pos);
+      const onlineTotal = round2(
+        day.websiteSales + day.uberSales + day.skipSales + day.doordashSales,
+      );
+      const posTotal = round2(day.posSales);
 
       const totalExpense = dayExpenses.reduce(
         (sum, e) => sum + (e.amount || 0),
@@ -2411,13 +2539,15 @@ exports.getMonthlySalesSummary = async ({
       const depositAccountPay = dayDeposit.accountPayAmount || 0;
       const expectedCash = Math.max(0, finalCashSales - totalExpense);
       const shortageCash = round2(depositCash - expectedCash);
+      const shortageCard = round2(depositCard - day.cardSales);
+      const shortageAccountPay = round2(depositAccountPay - day.accountPaySales);
 
       result.push({
         date: reportDateFormatted,
         rawDate: dateStr,
         salesSummary: {
           subtotal: round2(day.subtotal),
-          deliveryCharges: 0,
+          deliveryCharges: round2(day.deliveryFee),
           debitCharges: 0,
           discount: round2(day.discount),
           tax: round2(day.tax),
@@ -2429,8 +2559,8 @@ exports.getMonthlySalesSummary = async ({
         paymentType: {
           cash: finalCashSales,
           accountPay: finalAccountPaySales,
-          creditCardSales,
-          debitCardSales,
+          creditCardSales: round2(creditCardSales > 0 ? creditCardSales : day.cardSales),
+          debitCardSales: round2(debitCardSales),
           grandTotal: paymentGrandTotal,
           debitTips,
           creditTips,
@@ -2447,21 +2577,21 @@ exports.getMonthlySalesSummary = async ({
           completed: day.completedCount,
           paidCancelled: day.paidCancelledCount,
           unpaidCancelled: day.unpaidCancelledCount,
-          refund: 0,
-          refundAmount: 0,
+          refund: day.refundCount,
+          refundAmount: round2(day.refundAmount),
         },
         taxBreakdown: { pst: 0, gst, hst: 0, total: gst },
         cardType: {
-          amex: amexFinalAmount,
-          interac: interacFinalAmount,
-          mastercard: mastercardFinalAmount,
-          visa: visaFinalAmount,
+          amex: round2(day.amexSales),
+          interac: round2(day.interacSales),
+          mastercard: round2(day.mastercardSales),
+          visa: round2(day.visaSales),
         },
         online: {
-          website: round2(day.online),
-          uber: 0,
-          skip: 0,
-          doordash: 0,
+          website: round2(day.websiteSales),
+          uber: round2(day.uberSales),
+          skip: round2(day.skipSales),
+          doordash: round2(day.doordashSales),
           total: onlineTotal,
         },
         pos: { posSales: posTotal, total: posTotal },
