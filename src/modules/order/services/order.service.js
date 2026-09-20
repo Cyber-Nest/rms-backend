@@ -742,14 +742,31 @@ exports.updateOrderItems = async (id, updateData) => {
 };
 
 // ── Get Sales Summary Aggregation ─────────────────────────────
+const ACCOUNT_PAY_SOURCES = new Set(["online", "doordash", "skip", "ubereats"]);
+
+const getBranchFilter = (branchId) => {
+  if (!branchId) return null;
+  if (mongoose.Types.ObjectId.isValid(branchId)) {
+    return {
+      $or: [
+        { branchId: new mongoose.Types.ObjectId(branchId) },
+        { branchId },
+      ],
+    };
+  }
+  return { branchId };
+};
+
 exports.getSalesSummary = async (filters = {}) => {
   try {
-    const query = {};
     let start = null;
     let end = null;
+    let targetDateStr = "";
+
     if (filters.startDate || filters.endDate) {
       if (filters.startDate) {
         start = getLocalStartOfDay(filters.startDate);
+        targetDateStr = String(filters.startDate).split("T")[0];
       }
       if (filters.endDate) {
         end = getLocalEndOfDay(filters.endDate);
@@ -757,63 +774,32 @@ exports.getSalesSummary = async (filters = {}) => {
     } else if (filters.date) {
       start = getLocalStartOfDay(filters.date);
       end = getLocalEndOfDay(filters.date);
+      targetDateStr = String(filters.date).split("T")[0];
     } else {
-      const todayStr = getLocalDateStr();
-      start = getLocalStartOfDay(todayStr);
-      end = getLocalEndOfDay(todayStr);
+      targetDateStr = getLocalDateStr();
+      start = getLocalStartOfDay(targetDateStr);
+      end = getLocalEndOfDay(targetDateStr);
     }
 
     const baseFilter = filters.branchId ? { branchId: filters.branchId } : {};
-    const dateFilter = buildDateFilter(start, end, baseFilter);
-    Object.assign(query, dateFilter);
+    const query = buildDateFilter(start, end, baseFilter);
 
-    let targetDateStr = "";
-    if (filters.date) {
-      targetDateStr = String(filters.date).split("T")[0];
-    } else if (filters.startDate) {
-      targetDateStr = String(filters.startDate).split("T")[0];
-    } else {
-      targetDateStr = getLocalDateStr();
-    }
+    const branchQuery = getBranchFilter(filters.branchId);
 
     const expQuery = {};
-    if (filters.branchId) {
-      if (mongoose.Types.ObjectId.isValid(filters.branchId)) {
-        expQuery.$or = [
-          { branchId: new mongoose.Types.ObjectId(filters.branchId) },
-          { branchId: filters.branchId },
-        ];
-      } else {
-        expQuery.branchId = filters.branchId;
-      }
-    }
+    if (branchQuery) Object.assign(expQuery, branchQuery);
     if (start && end) {
       expQuery.expenseDate = { $gte: start, $lte: end };
     }
 
-    const dropQuery = { date: targetDateStr };
-    const depositQuery = { date: targetDateStr };
-    if (filters.branchId) {
-      if (mongoose.Types.ObjectId.isValid(filters.branchId)) {
-        dropQuery.$or = [
-          { branchId: new mongoose.Types.ObjectId(filters.branchId) },
-          { branchId: filters.branchId },
-        ];
-        depositQuery.$or = [
-          { branchId: new mongoose.Types.ObjectId(filters.branchId) },
-          { branchId: filters.branchId },
-        ];
-      } else {
-        dropQuery.branchId = filters.branchId;
-        depositQuery.branchId = filters.branchId;
-      }
-    }
+    const dropQuery = { date: targetDateStr, ...branchQuery };
+    const depositQuery = { date: targetDateStr, ...branchQuery };
 
     const [
       orders,
       deposit,
       expensesList,
-      { categoryMap: productCategoryMap },
+      { categoryMap: productCategoryMap = {} } = {},
       driverSettlements,
     ] = await Promise.all([
       Order.find(query)
@@ -843,6 +829,7 @@ exports.getSalesSummary = async (filters = {}) => {
     let grossTax = 0;
     let grossDiscount = 0;
     let grandTotal = 0;
+    let totalTips = 0;
 
     const categorySales = {};
 
@@ -865,104 +852,154 @@ exports.getSalesSummary = async (filters = {}) => {
     let interacTotal = 0;
     let creditCardTotal = 0;
     let debitCardTotal = 0;
-    let totalTips = 0;
 
     for (const order of orders) {
-      if (order.paymentStatus === "refunded") {
-        refundedCount += 1;
-        refundedTotal += order.total || 0;
-      } else if (order.status === "cancelled") {
-        cancelledCount += 1;
-        cancelledTotal += order.total || 0;
+      const {
+        status,
+        paymentStatus,
+        total = 0,
+        subtotal = 0,
+        tax = 0,
+        discount = 0,
+        tip = 0,
+        orderType,
+        orderSource,
+        payments,
+        paymentMethod,
+        items,
+      } = order;
+
+      if (paymentStatus === "refunded") {
+        refundedCount++;
+        refundedTotal += total;
+      } else if (status === "cancelled") {
+        cancelledCount++;
+        cancelledTotal += total;
       } else {
-        completedCount += 1;
-        completedTotal += order.total || 0;
+        completedCount++;
+        completedTotal += total;
 
-        grossSubtotal += order.subtotal || 0;
-        grossTax += order.tax || 0;
-        grossDiscount += order.discount || 0;
-        grandTotal += order.total || 0;
-        totalTips += order.tip || 0;
+        grossSubtotal += subtotal;
+        grossTax += tax;
+        grossDiscount += discount;
+        grandTotal += total;
+        totalTips += tip;
 
-        if (order.orderType === "takeout") takeoutTotal += order.total;
-        else if (order.orderType === "dine-in") dineInTotal += order.total;
-        else if (order.orderType === "drive-through")
-          driveThroughTotal += order.total;
-        else if (order.orderType === "delivery") deliveryTotal += order.total;
+        switch (orderType) {
+          case "takeout":
+            takeoutTotal += total;
+            break;
+          case "dine-in":
+            dineInTotal += total;
+            break;
+          case "drive-through":
+            driveThroughTotal += total;
+            break;
+          case "delivery":
+            deliveryTotal += total;
+            break;
+        }
 
-        if (order.orderSource === "online") onlineTotal += order.total;
-        else if (order.orderSource === "doordash") doordashTotal += order.total;
-        else if (order.orderSource === "skip") skipTotal += order.total;
-        else if (order.orderSource === "ubereats") ubereatsTotal += order.total;
-        else posTotal += order.total;
+        switch (orderSource) {
+          case "online":
+            onlineTotal += total;
+            break;
+          case "doordash":
+            doordashTotal += total;
+            break;
+          case "skip":
+            skipTotal += total;
+            break;
+          case "ubereats":
+            ubereatsTotal += total;
+            break;
+          default:
+            posTotal += total;
+            break;
+        }
 
-        if (order.paymentStatus === "paid") {
-          if (order.payments && order.payments.length > 0) {
-            for (const p of order.payments) {
-              if (
-                ["online", "doordash", "skip", "ubereats"].includes(
-                  order.orderSource,
-                ) ||
-                p.method === "stripe"
-              ) {
-                accountPayTotal += p.amount;
+        if (paymentStatus === "paid") {
+          const isAccountPaySource = ACCOUNT_PAY_SOURCES.has(orderSource);
+          if (payments && payments.length > 0) {
+            for (const p of payments) {
+              const amount = p.amount || 0;
+              if (isAccountPaySource || p.method === "stripe") {
+                accountPayTotal += amount;
               } else if (p.method === "cash") {
-                cashTotal += p.amount;
+                cashTotal += amount;
               } else {
-                cardTotal += p.amount;
+                cardTotal += amount;
 
-                const brand = p.cardBrand?.toLowerCase() || "";
-                if (brand === "visa") visaTotal += p.amount;
-                else if (brand === "mastercard") mastercardTotal += p.amount;
-                else interacTotal += p.amount;
+                const brand = p.cardBrand ? p.cardBrand.toLowerCase() : "";
+                if (brand === "visa") visaTotal += amount;
+                else if (brand === "mastercard") mastercardTotal += amount;
+                else interacTotal += amount;
 
-                const funding = p.cardFunding?.toLowerCase() || "";
-                if (funding === "credit") creditCardTotal += p.amount;
-                else debitCardTotal += p.amount;
+                const funding = p.cardFunding ? p.cardFunding.toLowerCase() : "";
+                if (funding === "credit") creditCardTotal += amount;
+                else debitCardTotal += amount;
               }
             }
           } else {
-            if (
-              ["online", "doordash", "skip", "ubereats"].includes(
-                order.orderSource,
-              ) ||
-              order.paymentMethod === "stripe"
-            ) {
-              accountPayTotal += order.total;
+            if (isAccountPaySource || paymentMethod === "stripe") {
+              accountPayTotal += total;
             } else {
-              cashTotal += order.total;
+              cashTotal += total;
             }
           }
         }
 
-        if (order.items && Array.isArray(order.items)) {
-          for (const item of order.items) {
+        if (items && items.length > 0) {
+          for (const item of items) {
             const itemProdId = item.menuItemId || "";
             const catName =
               item.categoryName ||
               item.category ||
               productCategoryMap[itemProdId] ||
               "Open Item";
-            categorySales[catName] =
-              (categorySales[catName] || 0) +
-              (item.totalPrice || item.basePrice * item.quantity);
+            const itemAmount = item.totalPrice || (item.basePrice || 0) * (item.quantity || 0);
+            categorySales[catName] = (categorySales[catName] || 0) + itemAmount;
           }
         }
       }
     }
 
     let totalCashExpense = 0;
-    const rawExpenses = [];
-    for (const e of expensesList || []) {
-      rawExpenses.push(e);
+    const rawExpenses = (expensesList || []).map((e) => {
+      const amount = e.amount || 0;
       if (e.paymentMode !== "card") {
-        totalCashExpense += e.amount || 0;
+        totalCashExpense += amount;
       }
-    }
+      return {
+        employee:
+          e.expenseType === "store"
+            ? "Store Expense"
+            : e.employeeName || "Manager",
+        pst: round2(e.pst || 0),
+        gst: round2(e.gst || 0),
+        hst: round2(e.hst || 0),
+        total: round2(amount),
+        paymentMode: e.paymentMode || "cash",
+      };
+    });
 
     let totalDriverCashPayout = 0;
-    (driverSettlements || []).forEach((ds) => {
+    const driverReport = (driverSettlements || []).map((ds) => {
       totalDriverCashPayout += ds.netCashPayoutToDriver || 0;
+      return {
+        driverName: ds.driverName,
+        shiftNumber: ds.shiftNumber || 1,
+        deliveryCount: ds.totalOrders,
+        prepaidSales: round2(ds.prepaidSales),
+        cashSales: round2(ds.cashSales),
+        cardSales: round2(ds.terminalSales),
+        prepaidTip: round2(ds.prepaidTips),
+        terminalTip: round2(ds.terminalTips),
+        totalTip: round2(ds.totalTipsEarned),
+        totalSales: round2(ds.totalSales),
+        driverEarning: round2(ds.totalDriverEarning),
+        expectedPayout: round2(ds.netCashPayoutToDriver),
+      };
     });
 
     const adjustedExpectedCash = cashTotal - totalCashExpense - totalDriverCashPayout;
@@ -1057,17 +1094,7 @@ exports.getSalesSummary = async (filters = {}) => {
         ubereats: round2(ubereatsTotal),
         pos: round2(adjustedPosTotal),
       },
-      expense: rawExpenses.map((e) => ({
-        employee:
-          e.expenseType === "store"
-            ? "Store Expense"
-            : e.employeeName || "Manager",
-        pst: round2(e.pst || 0),
-        gst: round2(e.gst || 0),
-        hst: round2(e.hst || 0),
-        total: round2(e.amount || 0),
-        paymentMode: e.paymentMode || "cash",
-      })),
+      expense: rawExpenses,
       shortageOverage: {
         cash: round2(shortageOverageCash),
         card: round2(shortageOverageCard),
@@ -1078,20 +1105,7 @@ exports.getSalesSummary = async (filters = {}) => {
         card: round2(cardTotal),
         accountPay: round2(accountPayTotal),
       },
-      driverReport: (driverSettlements || []).map((ds) => ({
-        driverName: ds.driverName,
-        shiftNumber: ds.shiftNumber || 1,
-        deliveryCount: ds.totalOrders,
-        prepaidSales: round2(ds.prepaidSales),
-        cashSales: round2(ds.cashSales),
-        cardSales: round2(ds.terminalSales),
-        prepaidTip: round2(ds.prepaidTips),
-        terminalTip: round2(ds.terminalTips),
-        totalTip: round2(ds.totalTipsEarned),
-        totalSales: round2(ds.totalSales),
-        driverEarning: round2(ds.totalDriverEarning),
-        expectedPayout: round2(ds.netCashPayoutToDriver),
-      })),
+      driverReport,
       deposit: deposit
         ? {
             cashAmount: round2(deposit.cashAmount),
