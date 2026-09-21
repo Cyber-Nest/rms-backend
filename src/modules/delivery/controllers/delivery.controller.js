@@ -112,13 +112,9 @@ exports.getDeliveryOrders = async (req, res) => {
     const { status } = req.query;
     const restaurantId = getRestaurantIdFromReq(req);
 
-    const now = new Date();
-    const startOfDay = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-    );
-    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+    const todayLocalStr = getLocalDateStr();
+    const startOfDay = getLocalStartOfDay(todayLocalStr);
+    const endOfDay = getLocalEndOfDay(todayLocalStr);
 
     const query = {
       orderType: "delivery",
@@ -252,8 +248,7 @@ exports.getDrivers = async (req, res) => {
         .lean(),
     ]);
 
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const todayStr = getLocalDateStr();
 
     const empIds = employees.map((e) => e._id);
     const attendances = await Attendance.find({
@@ -623,8 +618,7 @@ exports.assignVehicle = async (req, res) => {
       .lean();
 
     if (employee) {
-      const now = new Date();
-      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const todayStr = getLocalDateStr();
       const att = await Attendance.findOne({
         branchId: driver.restaurantId,
         employeeId: employee._id,
@@ -816,8 +810,7 @@ exports.driverLogin = async (req, res) => {
       await employee.save();
     }
 
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const todayStr = getLocalDateStr();
 
     if (employee) {
       const todayAttendance = await Attendance.findOne({
@@ -1509,7 +1502,7 @@ exports.completeActiveAssignment = async (req, res) => {
 exports.getDriverDropDrivers = async (req, res) => {
   try {
     const restaurantId = getRestaurantIdFromReq(req);
-    const dateStr = req.query.date || new Date().toISOString().split("T")[0];
+    const dateStr = req.query.date || getLocalDateStr();
 
     const employees = await Employee.find({
       branchId: restaurantId,

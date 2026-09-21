@@ -1,5 +1,7 @@
 const Promo = require('../models/promo.model');
 const logger = require('../../../shared/utils/logger');
+const { DateTime } = require('luxon');
+const TIMEZONE = 'America/Edmonton';
 
 exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtotal = 0, items = [], applyCount = 1 }) => {
   try {
@@ -44,7 +46,7 @@ exports.validatePromo = async ({ code, channel = 'both', branchId = null, subtot
     }
 
     //Date Range check
-    const now = new Date();
+    const now = DateTime.now().setZone(TIMEZONE).toJSDate();
     if (promo.startDate && now < new Date(promo.startDate)) {
       throw new Error('This promo code is not active yet.');
     }
