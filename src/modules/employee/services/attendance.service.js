@@ -306,7 +306,7 @@ exports.breakIn = async (branchId, employeeId) => {
   }
 
   activeShift.breaks.push({
-    breakIn: new Date(),
+    breakIn: DateTime.now().setZone(TIMEZONE).toJSDate(),
     breakOut: null,
   });
 
@@ -339,7 +339,7 @@ exports.breakOut = async (branchId, employeeId) => {
     throw new Error("No active break found to end");
   }
 
-  openBreak.breakOut = new Date();
+  openBreak.breakOut = DateTime.now().setZone(TIMEZONE).toJSDate();
 
   let totalBreakMins = 0;
   activeShift.breaks.forEach((b) => {
@@ -377,7 +377,7 @@ exports.checkOut = async (branchId, employeeId) => {
   if (attendance.status === "on-break") {
     const openBreak = activeShift.breaks.find((b) => !b.breakOut);
     if (openBreak) {
-      openBreak.breakOut = new Date();
+      openBreak.breakOut = DateTime.now().setZone(TIMEZONE).toJSDate();
     }
   }
 

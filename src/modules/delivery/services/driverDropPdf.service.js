@@ -19,8 +19,8 @@ exports.generateDriverDropPdf = async ({ driver, date, type = "both", shiftNumbe
       }
     }
 
-    const formattedDate = new Date(date).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
-    const formattedTime = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    const formattedDate = new Date(date).toLocaleDateString("en-US", { timeZone: "America/Edmonton", month: "2-digit", day: "2-digit", year: "numeric" });
+    const formattedTime = new Date().toLocaleTimeString("en-US", { timeZone: "America/Edmonton", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
     // Calculations (use settlement record if present, otherwise compute dynamically from orders list)
     const totalOrders = settlement?.totalOrders ?? orders.length;
