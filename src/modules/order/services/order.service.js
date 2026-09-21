@@ -847,6 +847,8 @@ exports.getSalesSummary = async (filters = {}) => {
     let cashTotal = 0;
     let cardTotal = 0;
     let accountPayTotal = 0;
+    let unpaidTotal = 0;
+    let amexTotal = 0;
     let visaTotal = 0;
     let mastercardTotal = 0;
     let interacTotal = 0;
@@ -869,15 +871,17 @@ exports.getSalesSummary = async (filters = {}) => {
         items,
       } = order;
 
-      if (paymentStatus === "refunded") {
+      if (paymentStatus === "refunded" || status === "refunded") {
         refundedCount++;
         refundedTotal += total;
       } else if (status === "cancelled") {
         cancelledCount++;
         cancelledTotal += total;
       } else {
-        completedCount++;
-        completedTotal += total;
+        if (status === "completed") {
+          completedCount++;
+          completedTotal += total;
+        }
 
         grossSubtotal += subtotal;
         grossTax += tax;
@@ -890,9 +894,11 @@ exports.getSalesSummary = async (filters = {}) => {
             takeoutTotal += total;
             break;
           case "dine-in":
+          case "dinein":
             dineInTotal += total;
             break;
           case "drive-through":
+          case "drivethrough":
             driveThroughTotal += total;
             break;
           case "delivery":
@@ -900,7 +906,8 @@ exports.getSalesSummary = async (filters = {}) => {
             break;
         }
 
-        switch (orderSource) {
+        const src = (orderSource || "pos").toLowerCase();
+        switch (src) {
           case "online":
             onlineTotal += total;
             break;
@@ -911,6 +918,7 @@ exports.getSalesSummary = async (filters = {}) => {
             skipTotal += total;
             break;
           case "ubereats":
+          case "uber":
             ubereatsTotal += total;
             break;
           default:
@@ -919,25 +927,42 @@ exports.getSalesSummary = async (filters = {}) => {
         }
 
         if (paymentStatus === "paid") {
-          const isAccountPaySource = ACCOUNT_PAY_SOURCES.has(orderSource);
+          const isAccountPaySource = ACCOUNT_PAY_SOURCES.has(src);
           if (payments && payments.length > 0) {
             for (const p of payments) {
               const amount = p.amount || 0;
-              if (isAccountPaySource || p.method === "stripe") {
+              const pMethod = (p.method || "").toLowerCase();
+              if (isAccountPaySource || pMethod === "stripe") {
                 accountPayTotal += amount;
-              } else if (p.method === "cash") {
+              } else if (pMethod === "cash") {
                 cashTotal += amount;
               } else {
                 cardTotal += amount;
 
-                const brand = p.cardBrand ? p.cardBrand.toLowerCase() : "";
-                if (brand === "visa") visaTotal += amount;
-                else if (brand === "mastercard") mastercardTotal += amount;
-                else interacTotal += amount;
+                const brand = (p.cardBrand || "").toLowerCase();
+                const funding = (p.cardFunding || "").toLowerCase();
 
-                const funding = p.cardFunding ? p.cardFunding.toLowerCase() : "";
-                if (funding === "credit") creditCardTotal += amount;
-                else debitCardTotal += amount;
+                if (brand.includes("visa")) {
+                  visaTotal += amount;
+                  creditCardTotal += amount;
+                } else if (brand.includes("master")) {
+                  mastercardTotal += amount;
+                  creditCardTotal += amount;
+                } else if (brand.includes("amex") || brand.includes("american")) {
+                  amexTotal += amount;
+                  creditCardTotal += amount;
+                } else if (brand.includes("interac") || funding === "debit" || pMethod === "debit") {
+                  interacTotal += amount;
+                  debitCardTotal += amount;
+                } else {
+                  if (funding === "credit") {
+                    creditCardTotal += amount;
+                    visaTotal += amount;
+                  } else {
+                    interacTotal += amount;
+                    debitCardTotal += amount;
+                  }
+                }
               }
             }
           } else {
@@ -947,6 +972,8 @@ exports.getSalesSummary = async (filters = {}) => {
               cashTotal += total;
             }
           }
+        } else {
+          unpaidTotal += total;
         }
 
         if (items && items.length > 0) {
@@ -1004,6 +1031,7 @@ exports.getSalesSummary = async (filters = {}) => {
 
     const adjustedExpectedCash = cashTotal - totalCashExpense - totalDriverCashPayout;
     const adjustedPosTotal = posTotal;
+    const totalPaymentsReceived = accountPayTotal + cashTotal + cardTotal + unpaidTotal;
 
     let shortageOverageCash = 0;
     let shortageOverageCard = 0;
@@ -1062,9 +1090,10 @@ exports.getSalesSummary = async (filters = {}) => {
         cash: round2(cashTotal),
         creditCardSales: round2(creditCardTotal),
         debitCardSales: round2(debitCardTotal),
-        grandTotal: round2(grandTotal),
+        unpaid: round2(unpaidTotal),
+        grandTotal: round2(totalPaymentsReceived),
         tips: round2(totalTips),
-        finalAmount: round2(grandTotal),
+        finalAmount: round2(totalPaymentsReceived + totalTips),
       },
       cardTypeReceived: {
         interac: {
@@ -2059,7 +2088,6 @@ exports.getMonthlySalesSummary = async ({
   branchId,
 } = {}) => {
   try {
-    const TIMEZONE = "America/Edmonton";
     let start, end;
     if (startDate && endDate) {
       start = getLocalStartOfDay(startDate);
@@ -2074,552 +2102,369 @@ exports.getMonthlySalesSummary = async ({
 
     const baseFilter = branchId ? { branchId } : {};
     const dateFilter = buildDateFilter(start, end, baseFilter);
+    const branchQuery = getBranchFilter(branchId);
 
-    const branchOrQuery = branchId
-      ? mongoose.Types.ObjectId.isValid(branchId)
-        ? {
-            $or: [
-              { branchId: new mongoose.Types.ObjectId(branchId) },
-              { branchId: String(branchId) },
-            ],
-          }
-        : { branchId }
-      : {};
+    const expQuery = {};
+    if (branchQuery) Object.assign(expQuery, branchQuery);
+    if (start && end) {
+      expQuery.expenseDate = { $gte: start, $lte: end };
+    }
 
-    const [ordersByDayAgg, expensesRaw, depositsRaw] = await Promise.all([
-      Order.aggregate([
-        { $match: dateFilter },
-        {
-          $addFields: {
-            businessDateStr: {
-              $dateToString: {
-                format: "%Y-%m-%d",
-                date: { $ifNull: ["$businessDate", "$createdAt"] },
-                timezone: TIMEZONE,
-              },
-            },
-          },
-        },
-        {
-          $group: {
-            _id: { date: "$businessDateStr", status: "$status" },
-            count: { $sum: 1 },
-            subtotal: { $sum: { $ifNull: ["$subtotal", 0] } },
-            tax: { $sum: { $ifNull: ["$tax", 0] } },
-            discount: { $sum: { $ifNull: ["$discount", 0] } },
-            deliveryFee: { $sum: { $ifNull: ["$deliveryFee", 0] } },
-            total: { $sum: "$total" },
-            takeoutTotal: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$status", "cancelled"] },
-                      { $eq: ["$orderType", "takeout"] },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
-            dineInTotal: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$status", "cancelled"] },
-                      { $in: ["$orderType", ["dine-in", "dinein"]] },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
-            deliveryTotal: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$status", "cancelled"] },
-                      { $eq: ["$orderType", "delivery"] },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
-            driveThroughTotal: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$status", "cancelled"] },
-                      {
-                        $in: ["$orderType", ["drive-through", "drivethrough"]],
-                      },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
-            onlineTotal: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$status", "cancelled"] },
-                      { $eq: ["$orderSource", "online"] },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
-            posTotal: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $ne: ["$status", "cancelled"] },
-                      { $eq: ["$orderSource", "pos"] },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
-            paidCancelled: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $eq: ["$status", "cancelled"] },
-                      { $eq: ["$paymentStatus", "paid"] },
-                    ],
-                  },
-                  1,
-                  0,
-                ],
-              },
-            },
-            unpaidCancelled: {
-              $sum: {
-                $cond: [
-                  {
-                    $and: [
-                      { $eq: ["$status", "cancelled"] },
-                      { $ne: ["$paymentStatus", "paid"] },
-                    ],
-                  },
-                  1,
-                  0,
-                ],
-              },
-            },
-            refundCount: {
-              $sum: {
-                $cond: [
-                  {
-                    $or: [
-                      { $eq: ["$paymentStatus", "refunded"] },
-                      { $eq: ["$status", "refunded"] },
-                    ],
-                  },
-                  1,
-                  0,
-                ],
-              },
-            },
-            refundAmount: {
-              $sum: {
-                $cond: [
-                  {
-                    $or: [
-                      { $eq: ["$paymentStatus", "refunded"] },
-                      { $eq: ["$status", "refunded"] },
-                    ],
-                  },
-                  "$total",
-                  0,
-                ],
-              },
-            },
-            orders: {
-              $push: {
-                total: "$total",
-                subtotal: "$subtotal",
-                tax: "$tax",
-                deliveryFee: "$deliveryFee",
-                payments: "$payments",
-                orderSource: "$orderSource",
-                orderType: "$orderType",
-                status: "$status",
-                paymentStatus: "$paymentStatus",
-                discount: "$discount",
-                discountType: "$discountType",
-                promoCode: "$promoCode",
-                tip: "$tip",
-              },
-            },
-          },
-        },
-      ]),
-      Expense.find({
-        expenseDate: { $gte: start, $lte: end },
-        ...branchOrQuery,
-      }).lean(),
-      Deposit.find({
-        date: {
-          $gte: startDate || getLocalDateStr(start),
-          $lte: endDate || getLocalDateStr(end),
-        },
-        ...branchOrQuery,
-      }).lean(),
+    const dropQuery = { ...branchQuery };
+    const depositQuery = { ...branchQuery };
+
+    const [
+      orders,
+      expensesList,
+      depositsList,
+      driverSettlementsList,
+      { categoryMap: productCategoryMap = {} } = {},
+    ] = await Promise.all([
+      Order.find(dateFilter)
+        .select(
+          "status tip total subtotal tax discount deliveryFee orderType orderSource paymentStatus payments items.menuItemId items.categoryName items.category items.totalPrice items.basePrice items.quantity paymentMethod promoCode businessDate createdAt",
+        )
+        .lean(),
+      Expense.find(expQuery)
+        .select("expenseDate paymentMode amount expenseType employeeName pst gst hst")
+        .lean()
+        .catch(() => []),
+      Deposit.find(depositQuery)
+        .lean()
+        .catch(() => []),
+      DriverDropSettlement.find(dropQuery)
+        .lean()
+        .catch(() => []),
+      getProductLookups(),
     ]);
 
-    const dayDataMap = new Map();
-
-    for (const row of ordersByDayAgg) {
-      const dateStr = row._id.date;
-      if (!dayDataMap.has(dateStr)) {
-        dayDataMap.set(dateStr, {
-          subtotal: 0,
-          tax: 0,
-          discount: 0,
-          deliveryFee: 0,
-          total: 0,
-          takeout: 0,
-          dineIn: 0,
-          delivery: 0,
-          driveThrough: 0,
-          completedCount: 0,
-          paidCancelledCount: 0,
-          unpaidCancelledCount: 0,
-          refundCount: 0,
-          refundAmount: 0,
-          cashSales: 0,
-          cardSales: 0,
-          accountPaySales: 0,
-          amexSales: 0,
-          interacSales: 0,
-          mastercardSales: 0,
-          visaSales: 0,
-          websiteSales: 0,
-          uberSales: 0,
-          skipSales: 0,
-          doordashSales: 0,
-          posSales: 0,
-          tips: 0,
-          orders: [],
-        });
+    const ordersByDay = new Map();
+    for (const order of orders) {
+      const dateVal = order.businessDate || order.createdAt;
+      const dateStr = dateVal ? getLocalDateStr(new Date(dateVal)) : "";
+      if (!dateStr) continue;
+      if (!ordersByDay.has(dateStr)) {
+        ordersByDay.set(dateStr, []);
       }
-      const day = dayDataMap.get(dateStr);
+      ordersByDay.get(dateStr).push(order);
+    }
 
-      if (row._id.status !== "cancelled") {
-        day.subtotal += row.subtotal;
-        day.tax += row.tax;
-        day.discount += row.discount;
-        day.deliveryFee += row.deliveryFee;
-        day.total += row.total;
-        day.takeout += row.takeoutTotal;
-        day.dineIn += row.dineInTotal;
-        day.delivery += row.deliveryTotal;
-        day.driveThrough += row.driveThroughTotal;
-        if (row._id.status === "completed") day.completedCount += row.count;
-        day.refundCount += row.refundCount || 0;
-        day.refundAmount += row.refundAmount || 0;
-        day.orders.push(...row.orders);
-      } else {
-        day.paidCancelledCount += row.paidCancelled;
-        day.unpaidCancelledCount += row.unpaidCancelled;
+    const expensesByDay = new Map();
+    for (const e of expensesList) {
+      const dateStr = e.expenseDate ? getLocalDateStr(new Date(e.expenseDate)) : "";
+      if (!dateStr) continue;
+      if (!expensesByDay.has(dateStr)) {
+        expensesByDay.set(dateStr, []);
+      }
+      expensesByDay.get(dateStr).push(e);
+    }
+
+    const depositByDay = new Map();
+    for (const d of depositsList) {
+      if (d.date) {
+        depositByDay.set(d.date, d);
       }
     }
 
-    for (const [, day] of dayDataMap) {
-      let cashSales = 0,
-        cardSales = 0,
-        accountPaySales = 0,
-        actualTips = 0;
-      let amexSales = 0,
-        interacSales = 0,
-        mastercardSales = 0,
-        visaSales = 0;
-      let websiteSales = 0,
-        uberSales = 0,
-        skipSales = 0,
-        doordashSales = 0,
-        posSales = 0;
-
-      const promoMap = new Map();
-
-      for (const o of day.orders) {
-        if (o.status === "cancelled") continue;
-        if (o.tip) actualTips += Number(o.tip) || 0;
-
-        if (o.promoCode) {
-          const codeKey = String(o.promoCode).toUpperCase();
-          if (!promoMap.has(codeKey)) {
-            promoMap.set(codeKey, { code: codeKey, count: 0, totalDiscount: 0 });
-          }
-          const pData = promoMap.get(codeKey);
-          pData.count += 1;
-          pData.totalDiscount += Number(o.discount || 0);
+    const settlementsByDay = new Map();
+    for (const ds of driverSettlementsList) {
+      if (ds.date) {
+        if (!settlementsByDay.has(ds.date)) {
+          settlementsByDay.set(ds.date, []);
         }
-
-        // Online vs POS tracking
-        const src = (o.orderSource || "pos").toLowerCase();
-        if (src === "pos") {
-          posSales += o.total || 0;
-        } else if (src === "ubereats" || src === "uber") {
-          uberSales += o.total || 0;
-        } else if (src === "skip") {
-          skipSales += o.total || 0;
-        } else if (src === "doordash") {
-          doordashSales += o.total || 0;
-        } else {
-          websiteSales += o.total || 0;
-        }
-
-        // Payment method and card brand breakdown
-        const orderPayments =
-          o.payments && o.payments.length > 0
-            ? o.payments
-            : [{ method: src === "pos" ? "cash" : "card", amount: o.total || 0 }];
-
-        for (const p of orderPayments) {
-          const method = (p.method || "cash").toLowerCase();
-          const brand = (p.cardBrand || "").toLowerCase();
-          const amt = p.amount || 0;
-
-          if (method === "cash") {
-            cashSales += amt;
-          } else if (method === "credit" || method === "card" || method === "debit") {
-            cardSales += amt;
-            if (brand.includes("amex") || brand.includes("american")) {
-              amexSales += amt;
-            } else if (brand.includes("interac")) {
-              interacSales += amt;
-            } else if (brand.includes("master")) {
-              mastercardSales += amt;
-            } else if (brand.includes("visa")) {
-              visaSales += amt;
-            } else {
-              // Unspecified card brand:
-              if (method === "debit") {
-                interacSales += amt;
-              } else {
-                // Split evenly between Visa and Mastercard, leave AMEX 0
-                visaSales += amt * 0.5;
-                mastercardSales += amt * 0.5;
-              }
-            }
-          } else {
-            accountPaySales += amt;
-          }
-        }
-      }
-
-      day.cashSales = cashSales;
-      day.cardSales = cardSales;
-      day.accountPaySales = accountPaySales;
-      day.amexSales = amexSales;
-      day.interacSales = interacSales;
-      day.mastercardSales = mastercardSales;
-      day.visaSales = visaSales;
-      day.websiteSales = websiteSales;
-      day.uberSales = uberSales;
-      day.skipSales = skipSales;
-      day.doordashSales = doordashSales;
-      day.posSales = posSales;
-      day.tips = round2(actualTips);
-
-      // If subtotal was 0, calculate subtotal cleanly
-      if (day.subtotal === 0 && day.total > 0) {
-        day.subtotal = round2(day.total - day.tax - day.deliveryFee + day.discount);
-      }
-
-      day.promoSummary = Array.from(promoMap.values()).map((p) => ({
-        code: p.code,
-        count: p.count,
-        totalDiscount: Math.round(p.totalDiscount * 100) / 100,
-      }));
-      delete day.orders;
-    }
-
-    const expenseMap = new Map();
-    for (const e of expensesRaw) {
-      const dateStr = e.expenseDate
-        ? getLocalDateStr(new Date(e.expenseDate))
-        : null;
-      if (dateStr) {
-        if (!expenseMap.has(dateStr)) expenseMap.set(dateStr, []);
-        expenseMap.get(dateStr).push(e);
+        settlementsByDay.get(ds.date).push(ds);
       }
     }
-    const depositMap = new Map();
-    for (const d of depositsRaw) {
-      depositMap.set(d.date, d);
-    }
 
-    const result = [];
     const startDateStr = startDate || getLocalDateStr(start);
     const endDateStr = endDate || getLocalDateStr(end);
     const currentDate = new Date(startDateStr);
     const stopDate = new Date(endDateStr);
+
+    const result = [];
 
     while (currentDate <= stopDate) {
       const dateStr = currentDate.toISOString().split("T")[0];
       const dateParts = dateStr.split("-");
       const reportDateFormatted = `${dateParts[1]}/${dateParts[2]}/${dateParts[0]}`;
 
-      const day = dayDataMap.get(dateStr) || {
-        subtotal: 0,
-        tax: 0,
-        discount: 0,
-        deliveryFee: 0,
-        total: 0,
-        takeout: 0,
-        dineIn: 0,
-        delivery: 0,
-        driveThrough: 0,
-        completedCount: 0,
-        paidCancelledCount: 0,
-        unpaidCancelledCount: 0,
-        refundCount: 0,
-        refundAmount: 0,
-        cashSales: 0,
-        cardSales: 0,
-        accountPaySales: 0,
-        amexSales: 0,
-        interacSales: 0,
-        mastercardSales: 0,
-        visaSales: 0,
-        websiteSales: 0,
-        uberSales: 0,
-        skipSales: 0,
-        doordashSales: 0,
-        posSales: 0,
-        tips: 0,
-      };
-      const dayExpenses = expenseMap.get(dateStr) || [];
-      const dayDeposit = depositMap.get(dateStr) || {
-        cashAmount: 0,
-        cardAmount: 0,
-        accountPayAmount: 0,
-      };
+      const dayOrders = ordersByDay.get(dateStr) || [];
+      const dayExpenses = expensesByDay.get(dateStr) || [];
+      const dayDeposit = depositByDay.get(dateStr) || null;
+      const daySettlements = settlementsByDay.get(dateStr) || [];
 
-      const grandTotal = day.total;
-      const tips = day.tips > 0 ? day.tips : grandTotal > 0 ? round2(grandTotal * 0.02) : 0;
-      const finalAmount = round2(grandTotal + tips);
+      let completedCount = 0;
+      let paidCancelledCount = 0;
+      let unpaidCancelledCount = 0;
+      let refundCount = 0;
+      let refundAmount = 0;
 
-      const finalCashSales = round2(day.cashSales);
-      const finalAccountPaySales = round2(day.accountPaySales);
-      const debitCardSales = round2(day.interacSales);
-      const creditCardSales = round2(day.cardSales - day.interacSales);
-      const paymentGrandTotal = round2(
-        finalCashSales + day.cardSales + finalAccountPaySales,
-      );
+      let grossSubtotal = 0;
+      let grossDeliveryFee = 0;
+      let grossTax = 0;
+      let grossDiscount = 0;
+      let grandTotal = 0;
+      let totalTips = 0;
 
-      const debitTips = round2(tips * 0.4);
-      const creditTips = round2(tips * 0.6);
-      const paymentFinalAmount = round2(
-        paymentGrandTotal + debitTips + creditTips,
-      );
+      let takeoutTotal = 0;
+      let dineInTotal = 0;
+      let driveThroughTotal = 0;
+      let deliveryTotal = 0;
 
-      const orderTypeTotal = round2(
-        day.takeout + day.dineIn + day.delivery + day.driveThrough,
-      );
+      let websiteTotal = 0;
+      let uberTotal = 0;
+      let skipTotal = 0;
+      let doordashTotal = 0;
+      let posTotal = 0;
 
-      const gst = round2(day.tax);
-      const onlineTotal = round2(
-        day.websiteSales + day.uberSales + day.skipSales + day.doordashSales,
-      );
-      const posTotal = round2(day.posSales);
+      let cashTotal = 0;
+      let cardTotal = 0;
+      let accountPayTotal = 0;
+      let amexTotal = 0;
+      let visaTotal = 0;
+      let mastercardTotal = 0;
+      let interacTotal = 0;
+      let creditCardTotal = 0;
+      let debitCardTotal = 0;
 
-      const totalExpense = dayExpenses.reduce(
-        (sum, e) => sum + (e.amount || 0),
-        0,
-      );
+      const promoMap = new Map();
 
-      const depositCash = dayDeposit.cashAmount || 0;
-      const depositCard = dayDeposit.cardAmount || 0;
-      const depositAccountPay = dayDeposit.accountPayAmount || 0;
-      const expectedCash = Math.max(0, finalCashSales - totalExpense);
-      const shortageCash = round2(depositCash - expectedCash);
-      const shortageCard = round2(depositCard - day.cardSales);
-      const shortageAccountPay = round2(depositAccountPay - day.accountPaySales);
+      for (const order of dayOrders) {
+        const {
+          status,
+          paymentStatus,
+          total = 0,
+          subtotal = 0,
+          tax = 0,
+          discount = 0,
+          deliveryFee = 0,
+          tip = 0,
+          orderType,
+          orderSource,
+          payments,
+          paymentMethod,
+          promoCode,
+        } = order;
+
+        if (paymentStatus === "refunded" || status === "refunded") {
+          refundCount++;
+          refundAmount += total;
+        } else if (status === "cancelled") {
+          if (paymentStatus === "paid") {
+            paidCancelledCount++;
+          } else {
+            unpaidCancelledCount++;
+          }
+        } else {
+          if (status === "completed") {
+            completedCount++;
+          }
+          grossSubtotal += subtotal;
+          grossDeliveryFee += deliveryFee;
+          grossTax += tax;
+          grossDiscount += discount;
+          grandTotal += total;
+          totalTips += tip;
+
+          if (promoCode) {
+            const codeKey = String(promoCode).toUpperCase();
+            if (!promoMap.has(codeKey)) {
+              promoMap.set(codeKey, { code: codeKey, count: 0, totalDiscount: 0 });
+            }
+            const pData = promoMap.get(codeKey);
+            pData.count += 1;
+            pData.totalDiscount += Number(discount || 0);
+          }
+
+          switch (orderType) {
+            case "takeout":
+              takeoutTotal += total;
+              break;
+            case "dine-in":
+            case "dinein":
+              dineInTotal += total;
+              break;
+            case "drive-through":
+            case "drivethrough":
+              driveThroughTotal += total;
+              break;
+            case "delivery":
+              deliveryTotal += total;
+              break;
+          }
+
+          const src = (orderSource || "pos").toLowerCase();
+          switch (src) {
+            case "online":
+              websiteTotal += total;
+              break;
+            case "doordash":
+              doordashTotal += total;
+              break;
+            case "skip":
+              skipTotal += total;
+              break;
+            case "ubereats":
+            case "uber":
+              uberTotal += total;
+              break;
+            default:
+              posTotal += total;
+              break;
+          }
+
+          if (paymentStatus === "paid") {
+            const isAccountPaySource = ACCOUNT_PAY_SOURCES.has(src);
+            if (payments && payments.length > 0) {
+              for (const p of payments) {
+                const amount = p.amount || 0;
+                const pMethod = (p.method || "").toLowerCase();
+                if (isAccountPaySource || pMethod === "stripe") {
+                  accountPayTotal += amount;
+                } else if (pMethod === "cash") {
+                  cashTotal += amount;
+                } else {
+                  cardTotal += amount;
+
+                  const brand = (p.cardBrand || "").toLowerCase();
+                  const funding = (p.cardFunding || "").toLowerCase();
+
+                  if (brand.includes("visa")) {
+                    visaTotal += amount;
+                    creditCardTotal += amount;
+                  } else if (brand.includes("master")) {
+                    mastercardTotal += amount;
+                    creditCardTotal += amount;
+                  } else if (brand.includes("amex") || brand.includes("american")) {
+                    amexTotal += amount;
+                    creditCardTotal += amount;
+                  } else if (brand.includes("interac") || funding === "debit" || pMethod === "debit") {
+                    interacTotal += amount;
+                    debitCardTotal += amount;
+                  } else {
+                    if (funding === "credit") {
+                      creditCardTotal += amount;
+                      visaTotal += amount;
+                    } else {
+                      interacTotal += amount;
+                      debitCardTotal += amount;
+                    }
+                  }
+                }
+              }
+            } else {
+              if (isAccountPaySource || paymentMethod === "stripe") {
+                accountPayTotal += total;
+              } else {
+                cashTotal += total;
+              }
+            }
+          }
+        }
+      }
+
+      let totalCashExpense = 0;
+      for (const e of dayExpenses) {
+        if (e.paymentMode !== "card") {
+          totalCashExpense += e.amount || 0;
+        }
+      }
+
+      let totalDriverCashPayout = 0;
+      for (const ds of daySettlements) {
+        totalDriverCashPayout += ds.netCashPayoutToDriver || 0;
+      }
+
+      const expectedCash = Math.max(0, cashTotal - totalCashExpense - totalDriverCashPayout);
+
+      const depositCash = dayDeposit ? (dayDeposit.cashAmount || 0) : 0;
+      const depositCard = dayDeposit ? (dayDeposit.cardAmount || 0) : 0;
+      const depositAccountPay = dayDeposit ? (dayDeposit.accountPayAmount || 0) : 0;
+
+      const shortageCash = dayDeposit ? round2(depositCash - expectedCash) : 0;
+      const shortageCard = dayDeposit ? round2(depositCard - cardTotal) : 0;
+      const shortageAccountPay = dayDeposit ? round2(depositAccountPay - accountPayTotal) : 0;
+
+      const totalPaymentsReceived = accountPayTotal + cashTotal + cardTotal;
+      const onlineTotal = websiteTotal + uberTotal + skipTotal + doordashTotal;
+      const orderTypeTotal = takeoutTotal + dineInTotal + deliveryTotal + driveThroughTotal;
+
+      const promoSummary = Array.from(promoMap.values()).map((p) => ({
+        code: p.code,
+        count: p.count,
+        totalDiscount: round2(p.totalDiscount),
+      }));
 
       result.push({
         date: reportDateFormatted,
         rawDate: dateStr,
         salesSummary: {
-          subtotal: round2(day.subtotal),
-          deliveryCharges: round2(day.deliveryFee),
+          subtotal: round2(grossSubtotal),
+          deliveryCharges: round2(grossDeliveryFee),
           debitCharges: 0,
-          discount: round2(day.discount),
-          tax: round2(day.tax),
+          discount: round2(grossDiscount),
+          tax: round2(grossTax),
           grandTotal: round2(grandTotal),
-          tips: round2(tips),
-          finalAmount: round2(finalAmount),
-          promoSummary: day.promoSummary || [],
+          tips: round2(totalTips),
+          finalAmount: round2(grandTotal + totalTips),
+          promoSummary,
         },
         paymentType: {
-          cash: finalCashSales,
-          accountPay: finalAccountPaySales,
-          creditCardSales: round2(creditCardSales > 0 ? creditCardSales : day.cardSales),
-          debitCardSales: round2(debitCardSales),
-          grandTotal: paymentGrandTotal,
-          debitTips,
-          creditTips,
-          finalAmount: paymentFinalAmount,
+          cash: round2(cashTotal),
+          accountPay: round2(accountPayTotal),
+          creditCardSales: round2(creditCardTotal),
+          debitCardSales: round2(debitCardTotal),
+          grandTotal: round2(totalPaymentsReceived),
+          debitTips: 0,
+          creditTips: 0,
+          finalAmount: round2(totalPaymentsReceived + totalTips),
         },
         orderType: {
-          takeout: round2(day.takeout),
-          dineIn: round2(day.dineIn),
-          delivery: round2(day.delivery),
-          driveThrough: round2(day.driveThrough),
-          total: orderTypeTotal,
+          takeout: round2(takeoutTotal),
+          dineIn: round2(dineInTotal),
+          delivery: round2(deliveryTotal),
+          driveThrough: round2(driveThroughTotal),
+          total: round2(orderTypeTotal),
         },
         orders: {
-          completed: day.completedCount,
-          paidCancelled: day.paidCancelledCount,
-          unpaidCancelled: day.unpaidCancelledCount,
-          refund: day.refundCount,
-          refundAmount: round2(day.refundAmount),
+          completed: completedCount,
+          paidCancelled: paidCancelledCount,
+          unpaidCancelled: unpaidCancelledCount,
+          refund: refundCount,
+          refundAmount: round2(refundAmount),
         },
-        taxBreakdown: { pst: 0, gst, hst: 0, total: gst },
+        taxBreakdown: { pst: 0, gst: round2(grossTax), hst: 0, total: round2(grossTax) },
         cardType: {
-          amex: round2(day.amexSales),
-          interac: round2(day.interacSales),
-          mastercard: round2(day.mastercardSales),
-          visa: round2(day.visaSales),
+          amex: round2(amexTotal),
+          interac: round2(interacTotal),
+          mastercard: round2(mastercardTotal),
+          visa: round2(visaTotal),
         },
         online: {
-          website: round2(day.websiteSales),
-          uber: round2(day.uberSales),
-          skip: round2(day.skipSales),
-          doordash: round2(day.doordashSales),
-          total: onlineTotal,
+          website: round2(websiteTotal),
+          uber: round2(uberTotal),
+          skip: round2(skipTotal),
+          doordash: round2(doordashTotal),
+          total: round2(onlineTotal),
         },
-        pos: { posSales: posTotal, total: posTotal },
-        expense: { amount: round2(totalExpense) },
-        shortage: { cash: shortageCash, card: 0, accountPay: 0 },
+        pos: { posSales: round2(posTotal), total: round2(posTotal) },
+        expense: { amount: round2(totalCashExpense) },
+        shortage: {
+          cash: shortageCash,
+          card: shortageCard,
+          accountPay: shortageAccountPay,
+          shortage: round2(shortageCash < 0 ? Math.abs(shortageCash) : 0),
+          overage: round2(shortageCash > 0 ? shortageCash : 0),
+        },
         deposit: {
           cash: round2(depositCash),
           card: round2(depositCard),
           accountPay: round2(depositAccountPay),
         },
         moneyToBeCollected: {
-          cash: round2(depositCash),
-          card: round2(depositCard),
-          accountPay: round2(depositAccountPay),
+          cash: round2(expectedCash),
+          card: round2(cardTotal),
+          accountPay: round2(accountPayTotal),
         },
       });
 
