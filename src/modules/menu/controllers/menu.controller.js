@@ -204,6 +204,20 @@ exports.toggleProductBranch = async (req, res) => {
   }
 };
 
+exports.setProductBranchPrice = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { branchId, customPrice } = req.body;
+    if (!branchId) {
+      return res.status(400).json({ success: false, message: 'branchId is required.' });
+    }
+    const product = await menuService.setProductBranchPrice(id, branchId, customPrice);
+    res.status(200).json({ success: true, data: product });
+  } catch (error) {
+    handleError(res, error, 400);
+  }
+};
+
 
 exports.uploadImage = async (req, res) => {
   try {

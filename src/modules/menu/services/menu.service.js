@@ -123,7 +123,7 @@ exports.getAllProducts = async (query = {}) => {
   try {
     if (query.minimal === "true" || query.minimal === true) {
       return await Product.find()
-        .select('_id name price image categoryId productId isActive kitchenLabel displayOrder disabledBranches outOfStockBranches')
+        .select('_id name price image categoryId productId isActive kitchenLabel displayOrder disabledBranches outOfStockBranches branchPrices')
         .populate('categoryId', 'name')
         .sort({ displayOrder: 1, name: 1 })
         .lean();
@@ -397,6 +397,14 @@ exports.getPOSMenuFeed = async (branchId = null) => {
           ? prod.outOfStockBranches.some(b => b.toString() === bIdStr) || prod.isOutOfStock
           : prod.isOutOfStock;
 
+        let effectivePrice = prod.price;
+        if (bIdStr && prod.branchPrices && prod.branchPrices.length > 0) {
+          const bp = prod.branchPrices.find(b => b.branchId && b.branchId.toString() === bIdStr);
+          if (bp && typeof bp.price === 'number' && bp.price >= 0) {
+            effectivePrice = bp.price;
+          }
+        }
+
         return {
           id: prod._id.toHexString(),
           productId: prod.productId || "",
@@ -404,7 +412,7 @@ exports.getPOSMenuFeed = async (branchId = null) => {
           name: prod.name,
           description: prod.description,
           image: prod.image,
-          price: prod.price,
+          price: effectivePrice,
           badge: prod.badge,
           isPopular: prod.isPopular,
           kitchenLabel: prod.kitchenLabel || 'chicken',
@@ -536,6 +544,43 @@ exports.deleteImageFromCloudinary = async (imageUrl) => {
     return result;
   } catch (error) {
     logger.error(`Cloudinary destroy service error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.setProductBranchPrice = async (productId, branchId, customPrice) => {
+  try {
+    const product = await Product.findById(productId);
+    if (!product) {
+      throw new Error('Product not found.');
+    }
+
+    if (customPrice === null || customPrice === undefined || customPrice === '' || Number(customPrice) < 0) {
+      // Remove branch price override (Reset to master base price)
+      await Product.findByIdAndUpdate(productId, {
+        $pull: { branchPrices: { branchId } }
+      });
+    } else {
+      const priceNum = Number(customPrice);
+      // Pull existing override for this branch first, then push new override
+      await Product.findByIdAndUpdate(productId, {
+        $pull: { branchPrices: { branchId } }
+      });
+      await Product.findByIdAndUpdate(productId, {
+        $push: { branchPrices: { branchId, price: priceNum } }
+      });
+    }
+
+    clearPOSMenuCache();
+
+    const updatedProduct = await Product.findById(productId)
+      .select('_id name price image itemType categoryId productId isActive kitchenLabel isOutOfStock disabledBranches outOfStockBranches branchPrices')
+      .populate('categoryId', 'name')
+      .lean();
+
+    return updatedProduct;
+  } catch (error) {
+    logger.error(`Menu Service Error: setProductBranchPrice - ${error.message}`);
     throw error;
   }
 };
