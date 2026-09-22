@@ -52,7 +52,7 @@ const modifierGroupSchema = new mongoose.Schema({
   },
   displayType: {
     type: String,
-    enum: ['radio', 'checkbox', 'card'],
+    enum: ['radio', 'checkbox', 'card', 'counter'],
     default: 'radio',
   },
   options: [modifierOptionSchema]
