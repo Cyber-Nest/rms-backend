@@ -339,7 +339,7 @@ exports.getAllOrders = async (filters = {}) => {
     }
 
     let selectFields =
-      "orderNumber customer subtotal total orderType orderSource paymentStatus status createdAt items orderTiming scheduledAt dueAt receptionCompleted";
+      "orderNumber customer subtotal total orderType orderSource paymentStatus paymentType payments status createdAt items orderTiming scheduledAt dueAt receptionCompleted";
     if (filters.fields) {
       selectFields = filters.fields.split(",").join(" ");
     }
