@@ -69,6 +69,18 @@ const productSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Branch'
   }],
+  branchPrices: [{
+    branchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Branch',
+      required: true,
+    },
+    price: {
+      type: Number,
+      required: true,
+      min: [0, 'Price cannot be negative'],
+    },
+  }],
   displayOrder: {
     type: Number,
     default: 0,

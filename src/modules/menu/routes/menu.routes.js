@@ -30,6 +30,7 @@ router.get('/products/branch-list', menuController.getBranchProductsList);
 router.patch('/products/:id/toggle-active', protectSuperAdmin, menuController.toggleProductActive);
 router.patch('/products/:id/toggle-stock', protectSuperAdmin, menuController.toggleProductStock);
 router.patch('/products/:id/toggle-branch', protectSuperAdmin, menuController.toggleProductBranch);
+router.patch('/products/:id/branch-price', protectSuperAdmin, menuController.setProductBranchPrice);
 router.patch('/categories/:id/toggle-branch', protectSuperAdmin, menuController.toggleCategoryBranch);
 router.get('/products', menuController.getProducts);
 router.post('/products', protectSuperAdmin, menuController.createProduct);
