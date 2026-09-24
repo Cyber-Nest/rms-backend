@@ -77,66 +77,90 @@ exports.sendPurchaseToTerminal = async ({
   }
 
   // ── 2. PRODUCTION MODE (Real Physical Moneris Hardware) ──────────────────────
-  const url = `${PRODUCTION_HOST}/payments`;
-
-  const payload = {
-    store_id: storeId,
-    api_token: apiToken,
-    terminal_id: terminalId,
-    amount: parseFloat(amount).toFixed(2),
-    order_id: String(orderId),
-  };
-
+  // Uses Moneris Cloud Terminal REST API with proper Bearer token authentication.
+  // Authorization: Bearer base64(storeId:apiToken)
   try {
     logger.info(
-      `[Moneris Live] Sending purchase → Terminal: ${terminalId} | Amount: $${amount}`,
+      `[Moneris Live] Sending purchase → Terminal: ${terminalId} | Store: ${storeId} | Amount: $${amount}`
     );
 
-    const response = await axios.post(url, payload, {
+    // Moneris Cloud Terminal REST API endpoint
+    const terminalUrl = `${PRODUCTION_HOST}/v1/terminal/purchase`;
+
+    // Moneris auth = Base64 of "storeId:apiToken"
+    const credentials = Buffer.from(`${storeId}:${apiToken}`).toString("base64");
+
+    const payload = {
+      store_id:    storeId,
+      api_token:   apiToken,
+      terminal_id: terminalId,
+      order_id:    String(orderId),
+      amount:      parseFloat(amount).toFixed(2),
+      dynamic_descriptor: "Restaurant POS",
+    };
+
+    logger.info(`[Moneris Live] POST ${terminalUrl} | TerminalId: ${terminalId}`);
+
+    const response = await axios.post(terminalUrl, payload, {
       headers: {
-        "Content-Type": "application/json",
-        "Api-Version": "2026-08-14",
-        "X-Merchant-Id": storeId,
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${credentials}`,
+        "Api-Version":   "2024-09-01",
       },
-      timeout: 90000, // 90 seconds — customer needs time to tap/insert card
+      timeout: 90000, // 90s — terminal needs time for customer to tap/insert card
     });
 
-    const data = response.data || {};
-    const receipt = data?.receipt || {};
-    const responseCode = receipt?.ResponseCode ?? "999";
+    const responseData = response.data;
 
-    // Moneris: ResponseCode < 50 = Approved
-    const approved =
-      !isNaN(parseInt(responseCode)) && parseInt(responseCode) < 50;
+    // ── Parse Response ────────────────────────────────────────────────────────
+    let responseCode = "999";
+    let receiptId    = "";
+    let authCode     = "";
+    let cardType     = "";
+    let cardLast4    = "";
+
+    if (responseData && typeof responseData === "object") {
+      const receipt = responseData?.receipt || responseData?.response || responseData || {};
+      responseCode  = String(receipt?.ResponseCode ?? receipt?.response_code ?? receipt?.code ?? "999");
+      receiptId     = receipt?.ReceiptId    || receipt?.receipt_id    || "";
+      authCode      = receipt?.AuthCode     || receipt?.auth_code     || "";
+      cardType      = receipt?.CardType     || receipt?.card_type     || "";
+      const pan     = receipt?.Pan          || receipt?.pan           || "";
+      cardLast4     = pan ? String(pan).slice(-4) : "";
+    }
+
+    // Moneris: ResponseCode < 50 → Approved (00 = Standard Approved)
+    const approved = !isNaN(parseInt(responseCode)) && parseInt(responseCode) < 50;
 
     logger.info(
-      `[Moneris Live] Response → ResponseCode: ${responseCode} | Approved: ${approved} | ReceiptId: ${receipt?.ReceiptId || "N/A"}`,
+      `[Moneris Live] Response → ResponseCode: ${responseCode} | Approved: ${approved} | ReceiptId: ${receiptId || "N/A"}`
     );
 
     return {
       approved,
       responseCode: String(responseCode),
-      receiptId: receipt?.ReceiptId || "",
-      authCode: receipt?.AuthCode || "",
-      cardType: receipt?.CardType || "",
-      cardLast4: receipt?.Pan ? String(receipt.Pan).slice(-4) : "",
-      rawResponse: data,
+      receiptId,
+      authCode,
+      cardType,
+      cardLast4,
+      rawResponse: responseData,
     };
   } catch (error) {
     const isTimeout =
       error.code === "ECONNABORTED" || error.message?.includes("timeout");
 
     if (isTimeout) {
-      logger.warn(
-        `[Moneris Live] Request timed out for terminal ${terminalId}`,
-      );
+      logger.warn(`[Moneris Live] Request timed out for terminal ${terminalId}`);
       throw Object.assign(
-        new Error(
-          "Terminal request timed out. Customer may not have responded.",
-        ),
-        {
-          code: "MONERIS_TIMEOUT",
-        },
+        new Error("Terminal request timed out. Customer may not have responded."),
+        { code: "MONERIS_TIMEOUT" }
+      );
+    }
+
+    // Log full error response for debugging
+    if (error.response) {
+      logger.error(
+        `[Moneris Live] HTTP ${error.response.status} from Moneris: ${JSON.stringify(error.response.data)}`
       );
     }
 
