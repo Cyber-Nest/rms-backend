@@ -45,7 +45,7 @@ const paymentEntrySchema = new mongoose.Schema(
   {
     method: {
       type: String,
-      enum: ["cash", "card", "credit", "debit"],
+      enum: ["cash", "card", "credit", "debit", "interac"],
       required: true,
     },
     amount: { type: Number, required: true },
@@ -56,6 +56,12 @@ const paymentEntrySchema = new mongoose.Schema(
     cardBrand: { type: String, default: "" },
     cardFunding: { type: String, default: "" },
     cardLast4: { type: String, default: "" },
+    // Moneris terminal payment fields
+    monerisReceiptId: { type: String, default: "" },
+    monerisTerminalId: { type: String, default: "" },
+    monerisAuthCode: { type: String, default: "" },
+    monerisResponseCode: { type: String, default: "" },
+    monerisCardType: { type: String, default: "" },
   },
   { _id: false },
 );

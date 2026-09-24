@@ -7,7 +7,7 @@ const paymentSchema = new mongoose.Schema(
     amount: { type: Number, required: true },
     paymentMethod: {
       type: String,
-      enum: ["cash", "card", "stripe"],
+      enum: ["cash", "card", "stripe", "moneris"],
       required: true,
     },
     status: {
@@ -21,6 +21,13 @@ const paymentSchema = new mongoose.Schema(
     cardFunding: { type: String, default: "" },
     cardLast4: { type: String, default: "" },
     rawStripeResponse: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Moneris terminal payment fields
+    monerisReceiptId: { type: String, default: "" },
+    monerisTerminalId: { type: String, default: "" },
+    monerisAuthCode: { type: String, default: "" },
+    monerisResponseCode: { type: String, default: "" },
+    monerisCardType: { type: String, default: "" },
+    rawMonerisResponse: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   {
     timestamps: true,
