@@ -38,7 +38,7 @@ exports.getTerminalById = async (req, res) => {
 // ── POST /api/terminals ──────────────────────────────────────────────────────
 exports.createTerminal = async (req, res) => {
   try {
-    const { branchId, terminalName, terminalId, apiToken, storeId, isRealDevice, createdBy } = req.body;
+    const { branchId, terminalName, terminalId, apiToken, storeId, istConfigCode, isRealDevice, createdBy } = req.body;
 
     if (!branchId || !terminalName || !terminalId || !apiToken || !storeId) {
       return res.status(400).json({ success: false, message: "All fields are required" });
@@ -46,12 +46,13 @@ exports.createTerminal = async (req, res) => {
 
     const terminal = new Terminal({
       branchId,
-      terminalName: terminalName.trim(),
-      terminalId: terminalId.trim(),
+      terminalName:  terminalName.trim(),
+      terminalId:    terminalId.trim(),
       apiToken,
-      storeId: storeId.trim(),
-      isRealDevice: Boolean(isRealDevice),
-      createdBy: createdBy || "Manager",
+      storeId:       storeId.trim(),
+      istConfigCode: (istConfigCode || "").trim(),
+      isRealDevice:  Boolean(isRealDevice),
+      createdBy:     createdBy || "Manager",
     });
 
     await terminal.save();
@@ -69,14 +70,15 @@ exports.createTerminal = async (req, res) => {
 // ── PUT /api/terminals/:id ───────────────────────────────────────────────────
 exports.updateTerminal = async (req, res) => {
   try {
-    const { terminalName, terminalId, apiToken, storeId, isRealDevice } = req.body;
+    const { terminalName, terminalId, apiToken, storeId, istConfigCode, isRealDevice } = req.body;
 
     const updateFields = {};
-    if (terminalName) updateFields.terminalName = terminalName.trim();
-    if (terminalId)   updateFields.terminalId   = terminalId.trim();
-    if (apiToken)     updateFields.apiToken      = apiToken;
-    if (storeId)      updateFields.storeId       = storeId.trim();
-    if (isRealDevice !== undefined) updateFields.isRealDevice = Boolean(isRealDevice);
+    if (terminalName)              updateFields.terminalName  = terminalName.trim();
+    if (terminalId)                updateFields.terminalId    = terminalId.trim();
+    if (apiToken)                  updateFields.apiToken      = apiToken;
+    if (storeId)                   updateFields.storeId       = storeId.trim();
+    if (istConfigCode !== undefined) updateFields.istConfigCode = (istConfigCode || "").trim();
+    if (isRealDevice !== undefined) updateFields.isRealDevice  = Boolean(isRealDevice);
 
     const terminal = await Terminal.findByIdAndUpdate(
       req.params.id,
@@ -132,12 +134,13 @@ exports.sendPurchase = async (req, res) => {
     }
 
     const result = await monerisService.sendPurchaseToTerminal({
-      storeId:      terminal.storeId,
-      apiToken:     terminal.apiToken,
-      terminalId:   terminal.terminalId,
-      amount:       Number(amount),
-      orderId:      orderReference || `order_${Date.now()}`,
-      isRealDevice: terminal.isRealDevice,
+      storeId:       terminal.storeId,
+      apiToken:      terminal.apiToken,
+      istConfigCode: terminal.istConfigCode || "",
+      terminalId:    terminal.terminalId,
+      amount:        Number(amount),
+      orderId:       orderReference || `order_${Date.now()}`,
+      isRealDevice:  terminal.isRealDevice,
     });
 
     if (!result.approved) {
