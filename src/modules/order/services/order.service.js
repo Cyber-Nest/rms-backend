@@ -176,6 +176,27 @@ exports.createOrder = async (orderData) => {
       ];
     }
 
+    // ── Moneris Terminal Payment ──────────────────────────────
+    if (orderData.paymentMethod === "moneris" && orderData.monerisReceiptId) {
+      paymentStatus = "paid";
+      const monerisCardType = orderData.monerisCardType || "";
+      // INTERAC debit → method = 'interac', else 'card'
+      const method = monerisCardType.toUpperCase().includes("INTERAC") ? "interac" : "card";
+      payments = [
+        {
+          method,
+          amount: orderData.total,
+          transactionId: orderData.monerisReceiptId,
+          cardLast4: orderData.monerisCardLast4 || "",
+          monerisReceiptId:    orderData.monerisReceiptId,
+          monerisTerminalId:   orderData.monerisTerminalId || "",
+          monerisAuthCode:     orderData.monerisAuthCode || "",
+          monerisResponseCode: orderData.monerisResponseCode || "",
+          monerisCardType:     monerisCardType,
+        },
+      ];
+    }
+
     let dueAt = orderData.dueAt;
     if (!dueAt) {
       if (orderData.orderTiming === "later" && orderData.scheduledAt) {
@@ -260,6 +281,31 @@ exports.createOrder = async (orderData) => {
         rawStripeResponse: paymentIntent,
       });
       await paymentDoc.save();
+    }
+
+    // ── Save Moneris Payment Document ─────────────────────────
+    if (orderData.paymentMethod === "moneris" && orderData.monerisReceiptId) {
+      try {
+        const monerisPaymentDoc = new Payment({
+          orderId:             order._id,
+          branchId:            order.branchId || null,
+          orderNumber:         order.orderNumber,
+          amount:              order.total,
+          paymentMethod:       "moneris",
+          status:              "succeeded",
+          transactionId:       orderData.monerisReceiptId,
+          cardLast4:           orderData.monerisCardLast4 || "",
+          monerisReceiptId:    orderData.monerisReceiptId,
+          monerisTerminalId:   orderData.monerisTerminalId || "",
+          monerisAuthCode:     orderData.monerisAuthCode || "",
+          monerisResponseCode: orderData.monerisResponseCode || "",
+          monerisCardType:     orderData.monerisCardType || "",
+          rawMonerisResponse:  orderData.rawMonerisResponse || null,
+        });
+        await monerisPaymentDoc.save();
+      } catch (err) {
+        logger.error(`Failed to save Moneris payment doc: ${err.message}`);
+      }
     }
 
     logger.info(
