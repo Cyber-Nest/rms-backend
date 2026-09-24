@@ -10,7 +10,7 @@ exports.getTerminals = async (req, res) => {
       return res.status(400).json({ success: false, message: "branchId is required" });
     }
     const terminals = await Terminal.find({ branchId, isActive: true })
-      .select("-apiToken") // Never send the token to the frontend list
+      .select("_id terminalName terminalId storeId isRealDevice createdAt")
       .sort({ createdAt: -1 })
       .lean();
     res.status(200).json({ success: true, data: terminals });
