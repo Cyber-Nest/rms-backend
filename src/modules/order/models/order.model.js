@@ -166,6 +166,14 @@ const orderSchema = new mongoose.Schema(
     driverNotes: { type: String, default: "" },
     placedBy: { type: String, default: "" },
 
+    // Delivery driver info (set when assignDriver is called, cleared on unassign)
+    assignedDriverId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Driver",
+      default: null,
+    },
+    assignedDriverName: { type: String, default: "" },
+
     status: {
       type: String,
       enum: ["pending", "preparing", "ready", "completed", "cancelled"],
