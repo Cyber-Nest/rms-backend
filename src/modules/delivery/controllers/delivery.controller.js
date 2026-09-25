@@ -57,6 +57,45 @@ const getRestaurantIdFromReq = (req) => {
   return branchId ? String(branchId) : "default";
 };
 
+/**
+ * Helper to filter assignments strictly to DELIVERED/COMPLETED orders and deduplicate by orderNumber / orderId.
+ */
+const getValidDeliveredOrdersFromAssignments = (assignments) => {
+  if (!Array.isArray(assignments)) return [];
+
+  const validAssignments = assignments.filter((a) => {
+    if (!a || !a.orderId) return false;
+    const orderStatus = a.orderId.status;
+    return orderStatus === "completed" || orderStatus === "delivered";
+  });
+
+  const mapByOrderKey = new Map();
+  for (const a of validAssignments) {
+    const orderKey = a.orderId.orderNumber
+      ? String(a.orderId.orderNumber)
+      : a.orderId._id
+        ? a.orderId._id.toString()
+        : String(a.orderId);
+
+    if (!mapByOrderKey.has(orderKey)) {
+      mapByOrderKey.set(orderKey, a);
+    } else {
+      const existing = mapByOrderKey.get(orderKey);
+      const existingTime = new Date(
+        existing.deliveredAt || existing.assignedAt || 0,
+      ).getTime();
+      const currentTime = new Date(
+        a.deliveredAt || a.assignedAt || 0,
+      ).getTime();
+      if (currentTime > existingTime) {
+        mapByOrderKey.set(orderKey, a);
+      }
+    }
+  }
+
+  return Array.from(mapByOrderKey.values());
+};
+
 // ─── PUSHER AUTH ───
 exports.pusherAuth = async (req, res) => {
   try {
@@ -542,6 +581,32 @@ exports.assignDriver = async (req, res) => {
       restaurantId: driver.restaurantId,
     });
 
+    // Stamp the order with assigned driver info + add history log entry
+    const assignedByName =
+      req.body.assignedBy ||
+      req.body.assignedByName ||
+      req.body.userName ||
+      req.body.managedBy ||
+      req.body.settledBy ||
+      req.user?.name ||
+      req.branch?.userName ||
+      req.branch?.employeeName ||
+      order.placedBy ||
+      "Manager";
+
+    await Order.findByIdAndUpdate(orderId, {
+      assignedDriverId: driver._id,
+      assignedDriverName: driver.name,
+      $push: {
+        statusHistory: {
+          status: "driver_assigned",
+          changedAt: new Date(),
+          note: `Driver assigned: ${driver.name}`,
+          userName: assignedByName,
+        },
+      },
+    });
+
     driver.status = "on-delivery";
     if (!driver.activeOrderIds.includes(orderId)) {
       driver.activeOrderIds.push(orderId);
@@ -992,9 +1057,10 @@ exports.markDelivered = async (req, res) => {
         status: "completed",
         $push: {
           statusHistory: {
-            status: "completed",
+            status: "driver_delivered",
             changedAt: new Date(),
-            note: "Delivered to customer",
+            note: `Delivered by driver: ${driver?.name || "Driver"}`,
+            userName: driver?.name || "Driver",
           },
         },
       },
@@ -1081,15 +1147,26 @@ exports.markDeliveredByBranch = async (req, res) => {
       }
     }
 
+    const actorName =
+      req.body.dispatchedBy ||
+      req.body.dispatchedByName ||
+      req.body.userName ||
+      req.body.settledBy ||
+      req.user?.name ||
+      req.branch?.userName ||
+      req.branch?.employeeName ||
+      "Manager";
+
     const order = await Order.findByIdAndUpdate(
       orderId,
       {
         status: "completed",
         $push: {
           statusHistory: {
-            status: "completed",
+            status: "pos_delivered",
             changedAt: new Date(),
             note: "Delivered to customer (via POS Dispatch)",
+            userName: actorName,
           },
         },
       },
@@ -1387,8 +1464,12 @@ exports.unassignDriver = async (req, res) => {
 
     // If the order itself was marked completed or delivered, reset status back to 'ready'
     const targetOrder = await Order.findById(orderId);
-    if (targetOrder && (targetOrder.status === "completed" || targetOrder.status === "delivered")) {
-      targetOrder.status = "ready";
+    if (targetOrder) {
+      if (targetOrder.status === "completed" || targetOrder.status === "delivered") {
+        targetOrder.status = "ready";
+      }
+      targetOrder.assignedDriverId = null;
+      targetOrder.assignedDriverName = "";
       await targetOrder.save();
     }
 
@@ -1683,12 +1764,16 @@ exports.getDriverDropSummary = async (req, res) => {
 
     let assignments = [];
     if (assignmentTimeQuery) {
-      assignments = await DeliveryAssignment.find({
+      const rawAssignments = await DeliveryAssignment.find({
         driverId,
+        status: { $in: ["delivered", "completed"] },
+        deliveredAt: { $ne: null },
         createdAt: assignmentTimeQuery,
       })
         .populate("orderId")
         .lean();
+
+      assignments = getValidDeliveredOrdersFromAssignments(rawAssignments);
     }
 
     const orders = assignments
@@ -1827,12 +1912,16 @@ exports.settleDriverDrop = async (req, res) => {
 
     let assignments = [];
     if (assignmentTimeQuery) {
-      assignments = await DeliveryAssignment.find({
+      const rawAssignments = await DeliveryAssignment.find({
         driverId,
+        status: { $in: ["delivered", "completed"] },
+        deliveredAt: { $ne: null },
         createdAt: assignmentTimeQuery,
       })
         .populate("orderId")
         .lean();
+
+      assignments = getValidDeliveredOrdersFromAssignments(rawAssignments);
     }
 
     const orders = assignments
@@ -2047,12 +2136,16 @@ exports.downloadDriverDropPdf = async (req, res) => {
         }
       }
 
-      const assignments = await DeliveryAssignment.find({
+      const rawAssignments = await DeliveryAssignment.find({
         driverId,
+        status: { $in: ["delivered", "completed"] },
+        deliveredAt: { $ne: null },
         createdAt: assignmentTimeQuery,
       })
         .populate("orderId")
         .lean();
+
+      assignments = getValidDeliveredOrdersFromAssignments(rawAssignments);
 
       orders = assignments
         .filter((a) => a.orderId)
@@ -2157,12 +2250,16 @@ exports.silentPrintDriverDrop = async (req, res) => {
         }
       }
 
-      const assignments = await DeliveryAssignment.find({
+      const rawAssignments = await DeliveryAssignment.find({
         driverId,
+        status: { $in: ["delivered", "completed"] },
+        deliveredAt: { $ne: null },
         createdAt: assignmentTimeQuery,
       })
         .populate("orderId")
         .lean();
+
+      assignments = getValidDeliveredOrdersFromAssignments(rawAssignments);
 
       orders = assignments
         .filter((a) => a.orderId)
