@@ -202,38 +202,64 @@ exports.updateEmployee = async (branchId, id, updateData) => {
   }
 
   if (updateData.role !== undefined && updateData.role !== employee.role) {
-    const oldRole = employee.role;
     employee.role = updateData.role;
 
     if (updateData.role === "driver" && !employee.driverRef) {
       try {
-        const driver = new Driver({
-          driverId: employee.employeeId,
-          name: employee.name,
-          phone: employee.phone,
-          password: "0000",
-          restaurantId: String(branchId),
-          status: "offline",
-        });
-        const savedDriver = await driver.save();
-        employee.driverRef = savedDriver._id;
+        let driverDoc = await Driver.findOne({ restaurantId: String(branchId), driverId: employee.employeeId });
+        if (!driverDoc) {
+          driverDoc = new Driver({
+            driverId: employee.employeeId,
+            name: employee.name,
+            phone: employee.phone,
+            password: "0000",
+            restaurantId: String(branchId),
+            status: "offline",
+          });
+          const savedDriver = await driverDoc.save();
+          employee.driverRef = savedDriver._id;
+        } else {
+          driverDoc.name = employee.name;
+          driverDoc.phone = employee.phone;
+          await driverDoc.save();
+          employee.driverRef = driverDoc._id;
+        }
       } catch (e) {}
     }
   }
 
-  try {
-    const driverFilter = employee.driverRef
-      ? { _id: employee.driverRef }
-      : { driverId: employee.employeeId };
-    const driverUpdate = {
-      name: employee.name,
-      phone: employee.phone,
-    };
-    if (updateData.pin !== undefined && updateData.pin !== "") {
-      driverUpdate.password = String(updateData.pin).trim();
+  // Only sync to Driver model if the employee is a driver OR has a linked driverRef
+  if (employee.role === "driver" || employee.driverRef) {
+    try {
+      const driverFilter = employee.driverRef
+        ? { _id: employee.driverRef, restaurantId: String(branchId) }
+        : { restaurantId: String(branchId), driverId: employee.employeeId };
+      const driverUpdate = {
+        name: employee.name,
+        phone: employee.phone,
+      };
+      if (updateData.pin !== undefined && updateData.pin !== "") {
+        driverUpdate.password = String(updateData.pin).trim();
+      }
+      let driverDoc = await Driver.findOneAndUpdate(driverFilter, driverUpdate, { new: true });
+      if (!driverDoc && employee.role === "driver") {
+        driverDoc = new Driver({
+          driverId: employee.employeeId,
+          name: employee.name,
+          phone: employee.phone,
+          password: updateData.pin ? String(updateData.pin).trim() : "0000",
+          restaurantId: String(branchId),
+          status: "offline",
+        });
+        await driverDoc.save();
+      }
+      if (driverDoc && (!employee.driverRef || String(employee.driverRef) !== String(driverDoc._id))) {
+        employee.driverRef = driverDoc._id;
+      }
+    } catch (e) {
+      console.warn("Could not sync linked Driver model:", e.message);
     }
-    await Driver.findOneAndUpdate(driverFilter, driverUpdate);
-  } catch (e) {}
+  }
 
   await employee.save();
 
