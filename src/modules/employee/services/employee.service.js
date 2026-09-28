@@ -118,6 +118,10 @@ exports.getAllEmployees = async (branchId, query = {}) => {
     filter.role = query.role;
   }
 
+  if (query.excludeDrivers === "true" || query.excludeDrivers === true) {
+    filter.role = { $regex: "^(?!driver$)", $options: "i" };
+  }
+
   if (query.isActive !== undefined) {
     filter.isActive = query.isActive === "true" || query.isActive === true;
   }
@@ -132,8 +136,15 @@ exports.getAllEmployees = async (branchId, query = {}) => {
     ];
   }
 
+  let projection = "-pin";
+  if (query.minimal === "true" || query.fields === "minimal") {
+    projection = "_id employeeId name role isActive";
+  } else if (query.fields) {
+    projection = query.fields.split(",").join(" ") + " -pin";
+  }
+
   const employees = await Employee.find(filter)
-    .select("-pin")
+    .select(projection)
     .sort({ createdAt: -1 })
     .lean();
 
