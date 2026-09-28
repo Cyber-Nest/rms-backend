@@ -556,6 +556,9 @@ exports.getAttendanceReport = async (branchId, options = {}) => {
 
   const filteredDocs = attendanceDocs.filter((doc) => {
     if (!doc.employeeId) return false;
+    if (doc.employeeId.role && doc.employeeId.role.toLowerCase() === "driver") {
+      return false;
+    }
     if (role && role !== "all") {
       return doc.employeeId.role === role;
     }
@@ -679,6 +682,9 @@ exports.getAttendanceReport = async (branchId, options = {}) => {
         grandTotalWorkMins += netWorkMins;
         grandTotalBreakMins += totalBreakMins;
 
+        const isManual = !!shift.isManualEntry || (shift.notes && shift.notes.toLowerCase().includes("manual"));
+        const isMgrOverride = isManual ? false : !!shift.managerOverride;
+
         rows.push({
           attendanceId: String(doc._id),
           shiftId: String(shift._id || sIdx),
@@ -704,7 +710,9 @@ exports.getAttendanceReport = async (branchId, options = {}) => {
           scheduledShiftStart: shift.scheduledShiftStart || "",
           scheduledShiftEnd: shift.scheduledShiftEnd || "",
           autoCheckedOut: !!shift.autoCheckedOut,
-          managerOverride: !!shift.managerOverride,
+          managerOverride: isMgrOverride,
+          isManualEntry: isManual,
+          createdByAdmin: true,
           managerOverrideBy: shift.managerOverrideBy || { name: "", employeeId: "" },
           notes: shift.notes || "",
           segmentIndex: sIdx + 1,
@@ -713,6 +721,7 @@ exports.getAttendanceReport = async (branchId, options = {}) => {
       });
     }
   });
+
 
   return {
     summary: {
@@ -813,3 +822,111 @@ exports.editAttendanceShift = async (branchId, payload) => {
     endDate: doc.date,
   });
 };
+
+exports.addManualAttendanceShift = async (branchId, payload) => {
+  const { employeeId, startDate, endDate, startTime, endTime, breaks = [], notes = "" } = payload;
+
+  if (!branchId || !employeeId) {
+    throw new Error("Branch ID and Employee ID are required");
+  }
+  if (!startDate || !startTime) {
+    throw new Error("Start date and start time are required");
+  }
+
+  const employee = await Employee.findOne({ _id: employeeId, branchId, isActive: true });
+  if (!employee) {
+    throw new Error("Employee not found or inactive");
+  }
+
+  const startDt = DateTime.fromISO(startDate, { zone: TIMEZONE });
+  const endDt = endDate ? DateTime.fromISO(endDate, { zone: TIMEZONE }) : startDt;
+
+  if (endDt < startDt) {
+    throw new Error("End date cannot be before start date");
+  }
+
+  let curr = startDt;
+  const createdRecords = [];
+
+  while (curr <= endDt) {
+    const dateStr = curr.toFormat("yyyy-MM-dd");
+
+    let attendance = await Attendance.findOne({ branchId, employeeId, date: dateStr });
+    if (!attendance) {
+      attendance = new Attendance({
+        branchId,
+        employeeId,
+        date: dateStr,
+        status: "checked-out",
+        shifts: [],
+      });
+    }
+
+    const checkInDt = DateTime.fromISO(`${dateStr}T${startTime}:00`, { zone: TIMEZONE });
+    let checkOutIso = null;
+
+    if (endTime) {
+      let checkOutDt = DateTime.fromISO(`${dateStr}T${endTime}:00`, { zone: TIMEZONE });
+      if (checkOutDt <= checkInDt) {
+        checkOutDt = checkOutDt.plus({ days: 1 });
+      }
+      checkOutIso = checkOutDt.toJSDate();
+    }
+
+    const formattedBreaks = (breaks || []).map((b) => {
+      const bInDt = DateTime.fromISO(`${dateStr}T${b.breakInTime}:00`, { zone: TIMEZONE });
+      let bOutDt = b.breakOutTime ? DateTime.fromISO(`${dateStr}T${b.breakOutTime}:00`, { zone: TIMEZONE }) : null;
+      if (bOutDt && bOutDt < bInDt) {
+        bOutDt = bOutDt.plus({ days: 1 });
+      }
+      return {
+        breakIn: bInDt.toJSDate(),
+        breakOut: bOutDt ? bOutDt.toJSDate() : null,
+      };
+    });
+
+    let totalBreakMins = 0;
+    formattedBreaks.forEach((b) => {
+      if (b.breakIn && b.breakOut) {
+        totalBreakMins += diffInMinutes(b.breakIn, b.breakOut);
+      }
+    });
+
+    let totalWorkMinutes = 0;
+    if (checkOutIso) {
+      const grossShiftMins = diffInMinutes(checkInDt.toJSDate(), checkOutIso);
+      totalWorkMinutes = Math.max(0, grossShiftMins - totalBreakMins);
+    }
+
+    attendance.shifts.push({
+      checkIn: checkInDt.toJSDate(),
+      checkOut: checkOutIso,
+      breaks: formattedBreaks,
+      totalWorkMinutes,
+      totalBreakMinutes: totalBreakMins,
+      scheduledShiftStart: startTime,
+      scheduledShiftEnd: endTime || "",
+      notes: notes || "Manual Shift Entry by Branch Admin",
+      isManualEntry: true,
+      createdByAdmin: true,
+      managerOverride: false,
+    });
+
+    attendance.status = checkOutIso ? "checked-out" : "checked-in";
+    await attendance.save();
+
+    try {
+      await triggerAttendanceUpdated(branchId, {
+        employeeId,
+        status: attendance.status,
+        date: dateStr,
+      });
+    } catch (pe) {}
+
+    createdRecords.push(attendance);
+    curr = curr.plus({ days: 1 });
+  }
+
+  return createdRecords;
+};
+

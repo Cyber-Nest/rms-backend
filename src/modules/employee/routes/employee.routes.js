@@ -36,6 +36,8 @@ router.get("/attendance/employee/:employeeId", protectBranch, enforceBranch, att
 // ── Attendance Report & Edit Routes ──
 router.get("/attendance/report", protectBranch, enforceBranch, attendanceController.getAttendanceReport);
 router.patch("/attendance/edit-shift", protectBranch, enforceBranch, attendanceController.editAttendanceShift);
+router.post("/attendance/shift/manual", protectBranch, enforceBranch, attendanceController.addManualAttendanceShift);
 
 module.exports = router;
+
 

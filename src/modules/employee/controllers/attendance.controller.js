@@ -174,3 +174,22 @@ exports.editAttendanceShift = async (req, res) => {
     });
   }
 };
+
+exports.addManualAttendanceShift = async (req, res) => {
+  try {
+    const branchId = getBranchIdFromReq(req);
+    const result = await attendanceService.addManualAttendanceShift(branchId, req.body);
+    res.status(201).json({
+      success: true,
+      message: "Manual shift log(s) created successfully",
+      data: result,
+    });
+  } catch (error) {
+    logger.error(`Error adding manual shift log: ${error.message}`);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
