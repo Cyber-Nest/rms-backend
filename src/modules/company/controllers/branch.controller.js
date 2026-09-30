@@ -207,7 +207,10 @@ exports.getBranchById = async (req, res) => {
 
 exports.updateBranch = async (req, res) => {
   try {
-    const branch = await branchService.updateBranch(req.params.id, req.body);
+    const updateData = { ...req.body };
+    delete updateData.password;
+
+    const branch = await branchService.updateBranch(req.params.id, updateData);
     res.status(200).json({
       success: true,
       message: "Branch updated successfully",

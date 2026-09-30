@@ -69,6 +69,22 @@ const branchSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    royaltyRate: {
+      type: Number,
+      default: 0,
+      min: [0, 'Royalty rate cannot be negative'],
+      max: [100, 'Royalty rate cannot exceed 100%'],
+    },
+    advertisementType: {
+      type: String,
+      enum: ['percentage', 'fixed'],
+      default: 'percentage',
+    },
+    advertisementRate: {
+      type: Number,
+      default: 0,
+      min: [0, 'Advertisement rate cannot be negative'],
+    },
     settings: {
       mainSettings: {
         timezone: { type: String, default: 'Mountain Standard Time (MST) - America/Edmonton' },
