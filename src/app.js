@@ -97,6 +97,7 @@ const { initExpenseModule } = require("./modules/expense");
 const { initPaymentModule } = require("./modules/payment");
 const { initDeliveryModule } = require("./modules/delivery");
 const { initEmployeeModule } = require("./modules/employee");
+const { initRoyaltyModule } = require("./modules/royalty");
 
 initCompanyModule(app);
 initMenuModule(app);
@@ -106,6 +107,7 @@ initExpenseModule(app);
 initPaymentModule(app);
 initDeliveryModule(app);
 initEmployeeModule(app);
+initRoyaltyModule(app);
 
 app.get("/api/health", (req, res) => {
   res.status(200).json({
