@@ -4,7 +4,7 @@ const logger = require("../../../shared/utils/logger");
 // ── Generate Royalty Records ──
 exports.generateRoyaltyRecords = async (req, res) => {
   try {
-    const { periodType, periodStart, periodEnd, branchIds } = req.body;
+    const { periodType, periodStart, periodEnd, branchIds, includeTax } = req.body;
 
     if (!periodStart || !periodEnd) {
       return res.status(400).json({
@@ -25,6 +25,7 @@ exports.generateRoyaltyRecords = async (req, res) => {
       periodStart,
       periodEnd,
       branchIds: branchIds || null,
+      includeTax: Boolean(includeTax),
     });
 
     res.status(200).json({
