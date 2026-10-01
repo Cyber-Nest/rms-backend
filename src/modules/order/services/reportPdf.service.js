@@ -710,8 +710,9 @@ exports.generateReportPdf = async (type, data, dateRangeStr, res, branchId = nul
         // ── 1. SALES SUMMARY ──
         renderRow("1. SALES SUMMARY", null, null, true);
         renderRow("Sub Total", (r) => fmt(r.salesSummary.subtotal), () => fmt(effTot.subtotal));
-        renderRow("Delivery Charges", (r) => fmt(r.salesSummary.deliveryCharges), () => fmt(effTot.deliveryCharges));
         renderRow("Discount", (r) => `(${fmt(r.salesSummary.discount)})`, () => `(${fmt(effTot.discount)})`);
+        renderRow("Net Total", (r) => fmt((r.salesSummary.subtotal || 0) - (r.salesSummary.discount || 0)), () => fmt(effTot.subtotal - effTot.discount), false, true);
+        renderRow("Delivery Charges", (r) => fmt(r.salesSummary.deliveryCharges), () => fmt(effTot.deliveryCharges));
         renderRow("Tax (GST)", (r) => fmt(r.salesSummary.tax), () => fmt(effTot.tax));
         renderRow("Grand Total", (r) => fmt(r.salesSummary.grandTotal), () => fmt(effTot.grandTotal), false, true);
         renderRow("Tips", (r) => fmt(r.salesSummary.tips), () => fmt(effTot.tips));

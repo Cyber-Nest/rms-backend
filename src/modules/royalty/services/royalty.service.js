@@ -16,6 +16,7 @@ exports.generateRoyaltyRecords = async ({
   periodStart,
   periodEnd,
   branchIds = null, // null = all active branches
+  includeTax = false,
 }) => {
   const start = new Date(periodStart);
   const end = new Date(periodEnd);
@@ -89,14 +90,21 @@ exports.generateRoyaltyRecords = async ({
         {
           $group: {
             _id: null,
-            totalSales: { $sum: "$total" },
+            grossSubtotal: { $sum: "$subtotal" },
+            grossDiscount: { $sum: "$discount" },
+            grossTax: { $sum: "$tax" },
             totalOrders: { $sum: 1 },
           },
         },
       ]);
 
-      const totalSales = salesAgg[0]?.totalSales || 0;
+      const grossSubtotal = parseFloat((salesAgg[0]?.grossSubtotal || 0).toFixed(2));
+      const grossDiscount = parseFloat((salesAgg[0]?.grossDiscount || 0).toFixed(2));
+      const grossTax = parseFloat((salesAgg[0]?.grossTax || 0).toFixed(2));
       const totalOrders = salesAgg[0]?.totalOrders || 0;
+
+      const netTotal = parseFloat(Math.max(0, grossSubtotal - grossDiscount).toFixed(2));
+      const totalSales = parseFloat((includeTax ? netTotal + grossTax : netTotal).toFixed(2));
 
       // Calculate royalty amount
       const royaltyRate = branch.royaltyRate || 0;
@@ -140,7 +148,12 @@ exports.generateRoyaltyRecords = async ({
         periodLabel,
         startDate: actualStart,
         endDate: end,
-        totalSales: parseFloat(totalSales.toFixed(2)),
+        totalSales,
+        subtotal: grossSubtotal,
+        discount: grossDiscount,
+        netTotal,
+        tax: grossTax,
+        includeTax: Boolean(includeTax),
         totalOrders,
         royaltyRate,
         royaltyAmount,

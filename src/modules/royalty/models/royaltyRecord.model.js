@@ -51,6 +51,26 @@ const royaltyRecordSchema = new mongoose.Schema(
       required: true,
       default: 0,
     },
+    subtotal: {
+      type: Number,
+      default: 0,
+    },
+    discount: {
+      type: Number,
+      default: 0,
+    },
+    netTotal: {
+      type: Number,
+      default: 0,
+    },
+    tax: {
+      type: Number,
+      default: 0,
+    },
+    includeTax: {
+      type: Boolean,
+      default: false,
+    },
     totalOrders: {
       type: Number,
       default: 0,
