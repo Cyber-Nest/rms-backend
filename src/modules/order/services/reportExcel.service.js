@@ -128,7 +128,7 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
       // Row 2: Sub Category Header Row
       csvContent += formatRow([
         "Date",
-        "Sub Total", "Delivery Charges", "Discount", "Tax (GST)", "Grand Total", "Tips", "Final Amount",
+        "Sub Total", "Discount", "Net Total", "Delivery Charges", "Tax (GST)", "Grand Total", "Tips", "Final Amount",
         "Cash Sales", "Account Pay", "Credit Card Sales", "Debit Card Sales", "Grand Total", "Debit Card Tips", "Credit Card Tips", "Final Amount",
         "Take-Out", "Dine-in", "Delivery", "Drive Through", "Total Order Type",
         "Completed", "Paid Cancelled", "Unpaid Cancelled", "Refund Orders", "Refund Amount",
@@ -381,10 +381,11 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
 
         csvContent += formatRow([
           "\t" + row.date,
-          // 1. Sales Summary (7)
+          // 1. Sales Summary (8)
           row.salesSummary.subtotal.toFixed(2),
-          row.salesSummary.deliveryCharges.toFixed(2),
           `(${row.salesSummary.discount.toFixed(2)})`,
+          (row.salesSummary.subtotal - row.salesSummary.discount).toFixed(2),
+          row.salesSummary.deliveryCharges.toFixed(2),
           row.salesSummary.tax.toFixed(2),
           row.salesSummary.grandTotal.toFixed(2),
           row.salesSummary.tips.toFixed(2),
@@ -445,8 +446,9 @@ exports.generateReportCsv = (type, data, dateRangeStr, res) => {
       csvContent += formatRow([
         "TOTAL",
         grand.subtotal.toFixed(2),
-        grand.deliveryCharges.toFixed(2),
         `(${grand.discount.toFixed(2)})`,
+        (grand.subtotal - grand.discount).toFixed(2),
+        grand.deliveryCharges.toFixed(2),
         grand.tax.toFixed(2),
         grand.grandTotal.toFixed(2),
         grand.tips.toFixed(2),

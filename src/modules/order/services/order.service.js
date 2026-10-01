@@ -2446,9 +2446,10 @@ exports.getMonthlySalesSummary = async ({
         rawDate: dateStr,
         salesSummary: {
           subtotal: round2(grossSubtotal),
+          discount: round2(grossDiscount),
+          netTotal: round2(grossSubtotal - grossDiscount),
           deliveryCharges: round2(grossDeliveryFee),
           debitCharges: 0,
-          discount: round2(grossDiscount),
           tax: round2(grossTax),
           grandTotal: round2(grandTotal),
           tips: round2(totalTips),
