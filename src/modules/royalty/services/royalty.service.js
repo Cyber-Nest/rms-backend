@@ -11,6 +11,44 @@ const Order = require("../../order/models/order.model");
  * Only completed/paid orders are counted. Cancelled orders are excluded.
  * Duplicate records (same branchId + startDate + endDate) are skipped.
  */
+// HELPER — generate monthly chunks for date ranges
+function generateChunks(startDate, endDate, periodType) {
+  if (periodType === "monthly") {
+    return [{ start: startDate, end: endDate, isMonthly: true }];
+  }
+
+  const chunks = [];
+  let currentStart = new Date(startDate);
+  currentStart.setHours(0, 0, 0, 0);
+
+  const finalEnd = new Date(endDate);
+  finalEnd.setHours(23, 59, 59, 999);
+
+  while (currentStart <= finalEnd) {
+    const year = currentStart.getFullYear();
+    const month = currentStart.getMonth();
+
+    const firstOfNextMonth = new Date(year, month + 1, 1, 0, 0, 0, 0);
+    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
+
+    const chunkEnd = endOfMonth < finalEnd ? endOfMonth : new Date(finalEnd);
+
+    const isFirstDay = currentStart.getDate() === 1;
+    const isLastDay = chunkEnd.getTime() === endOfMonth.getTime();
+    const isMonthly = isFirstDay && isLastDay;
+
+    chunks.push({
+      start: new Date(currentStart),
+      end: new Date(chunkEnd),
+      isMonthly,
+    });
+
+    currentStart = firstOfNextMonth;
+  }
+
+  return chunks;
+}
+
 exports.generateRoyaltyRecords = async ({
   periodType,
   periodStart,
@@ -19,8 +57,8 @@ exports.generateRoyaltyRecords = async ({
   includeTax = false,
 }) => {
   const start = new Date(periodStart);
+  start.setHours(0, 0, 0, 0);
   const end = new Date(periodEnd);
-  // Set end to end of that day
   end.setHours(23, 59, 59, 999);
 
   // Fetch branches
@@ -43,149 +81,199 @@ exports.generateRoyaltyRecords = async ({
     errors: [],
   };
 
+  const chunks = generateChunks(start, end, periodType);
+
   for (const branch of branches) {
-    try {
-      const branchCreated = new Date(branch.createdAt);
-      const actualStart = branchCreated > start ? branchCreated : start;
+    let branchCreated = branch.createdAt ? new Date(branch.createdAt) : null;
+    if (branchCreated) {
+      branchCreated.setHours(0, 0, 0, 0);
+    }
 
-      // If branch was created AFTER the period end → skip
-      if (actualStart > end) {
-        results.skipped.push({
-          branchId: branch._id,
-          branchName: branch.name,
-          reason: "Branch did not exist in this period",
-        });
-        continue;
-      }
+    for (const chunk of chunks) {
+      try {
+        let actualStart = chunk.start;
+        if (branchCreated && branchCreated > chunk.start) {
+          actualStart = branchCreated;
+        }
+        const chunkEnd = chunk.end;
 
-      // Check for duplicate record
-      const existing = await RoyaltyRecord.findOne({
-        branchId: branch._id,
-        startDate: actualStart,
-        endDate: end,
-      });
-
-      if (existing) {
-        results.skipped.push({
-          branchId: branch._id,
-          branchName: branch.name,
-          reason: "Record already exists for this period",
-        });
-        continue;
-      }
-
-      // Exclude cancelled orders
-      const salesAgg = await Order.aggregate([
-        {
-          $match: {
+        // If branch was created AFTER the period chunk end → skip
+        if (actualStart > chunkEnd) {
+          results.skipped.push({
             branchId: branch._id,
-            status: { $ne: "cancelled" },
-            paymentStatus: "paid",
+            branchName: branch.name,
+            reason: `Branch created after this period (${branchCreated ? branchCreated.toISOString().slice(0, 10) : ""})`,
+          });
+          continue;
+        }
+
+        // Find existing records overlapping with this chunk
+        const existingRecords = await RoyaltyRecord.find({
+          branchId: branch._id,
+          startDate: { $lte: chunkEnd },
+          endDate: { $gte: actualStart },
+        }).lean();
+
+        // Check if an EXACT or broader record already covers this entire range
+        const exactMatch = existingRecords.find(
+          (r) =>
+            new Date(r.startDate) <= new Date(actualStart) &&
+            new Date(r.endDate) >= new Date(chunkEnd)
+        );
+
+        if (exactMatch) {
+          const statusText = exactMatch.status === "paid" ? "is PAID" : "already exists";
+          results.skipped.push({
+            branchId: branch._id,
+            branchName: branch.name,
+            reason: `Record for ${exactMatch.periodLabel} ${statusText}`,
+          });
+          continue;
+        }
+
+        // Build list of date ranges to exclude from order aggregation (partial paid/generated periods)
+        const excludeRanges = existingRecords.map((r) => ({
+          start: new Date(r.startDate),
+          end: new Date(r.endDate),
+        }));
+
+        // Build date filter matching Sales Summary report logic
+        const startStr = actualStart.toISOString().slice(0, 10);
+        const endStr = chunkEnd.toISOString().slice(0, 10);
+
+        // Prepare Order Match Filter: ONLY PAID, NON-CANCELLED ORDERS
+        const matchFilter = {
+          $and: [
+            {
+              $or: [
+                { branchId: branch._id },
+                { branchId: String(branch._id) },
+              ],
+            },
+            { status: { $nin: ["cancelled", "CANCELLED"] } },
+            { paymentStatus: { $in: ["paid", "PAID"] } },
+            {
+              $or: [
+                { createdAt: { $gte: actualStart, $lte: chunkEnd } },
+                { businessDate: { $gte: startStr, $lte: endStr } },
+              ],
+            },
+          ],
+        };
+
+        // Exclude orders from already billed/paid date ranges
+        if (excludeRanges.length > 0) {
+          matchFilter.$nor = excludeRanges.map((r) => ({
             createdAt: {
-              $gte: actualStart,
-              $lte: end,
+              $gte: r.start,
+              $lte: r.end,
+            },
+          }));
+        }
+
+        // Exclude cancelled orders
+        const salesAgg = await Order.aggregate([
+          { $match: matchFilter },
+          {
+            $group: {
+              _id: null,
+              grossSubtotal: { $sum: "$subtotal" },
+              grossDiscount: { $sum: "$discount" },
+              grossTax: { $sum: "$tax" },
+              totalOrders: { $sum: 1 },
             },
           },
-        },
-        {
-          $group: {
-            _id: null,
-            grossSubtotal: { $sum: "$subtotal" },
-            grossDiscount: { $sum: "$discount" },
-            grossTax: { $sum: "$tax" },
-            totalOrders: { $sum: 1 },
-          },
-        },
-      ]);
+        ]);
 
-      const grossSubtotal = parseFloat((salesAgg[0]?.grossSubtotal || 0).toFixed(2));
-      const grossDiscount = parseFloat((salesAgg[0]?.grossDiscount || 0).toFixed(2));
-      const grossTax = parseFloat((salesAgg[0]?.grossTax || 0).toFixed(2));
-      const totalOrders = salesAgg[0]?.totalOrders || 0;
+        // Helper for accurate 2-decimal currency rounding
+        const round2 = (num) => Math.round((Number(num || 0) + Number.EPSILON) * 100) / 100;
 
-      const netTotal = parseFloat(Math.max(0, grossSubtotal - grossDiscount).toFixed(2));
-      const totalSales = parseFloat((includeTax ? netTotal + grossTax : netTotal).toFixed(2));
+        const grossSubtotal = round2(salesAgg[0]?.grossSubtotal || 0);
+        const grossDiscount = round2(salesAgg[0]?.grossDiscount || 0);
+        const grossTax = round2(salesAgg[0]?.grossTax || 0);
+        const totalOrders = salesAgg[0]?.totalOrders || 0;
 
-      // Calculate royalty amount
-      const royaltyRate = branch.royaltyRate || 0;
-      const royaltyAmount = parseFloat(
-        ((totalSales * royaltyRate) / 100).toFixed(2)
-      );
+        const netTotal = round2(Math.max(0, grossSubtotal - grossDiscount));
+        const totalSales = round2(includeTax ? netTotal + grossTax : netTotal);
 
-      // Calculate advertisement amount
-      const advertisementType = branch.advertisementType || "percentage";
-      const advertisementRate = branch.advertisementRate || 0;
-      let advertisementAmount = 0;
+        // Calculate royalty amount
+        const royaltyRate = branch.royaltyRate || 0;
+        const royaltyAmount = round2((totalSales * royaltyRate) / 100);
 
-      if (advertisementType === "percentage") {
-        advertisementAmount = parseFloat(
-          ((totalSales * advertisementRate) / 100).toFixed(2)
+        // Calculate advertisement amount
+        const advertisementType = branch.advertisementType || "percentage";
+        const advertisementRate = branch.advertisementRate || 0;
+        let advertisementAmount = 0;
+
+        if (advertisementType === "percentage") {
+          advertisementAmount = round2((totalSales * advertisementRate) / 100);
+        } else {
+          advertisementAmount = round2(advertisementRate);
+        }
+
+        const totalDue = round2(royaltyAmount + advertisementAmount);
+
+        // Build period label
+        const chunkPeriodType = chunk.isMonthly ? "monthly" : "custom";
+        let periodLabel = buildPeriodLabel(
+          chunkPeriodType,
+          actualStart,
+          chunkEnd,
+          branchCreated > chunk.start
         );
-      } else {
-        // fixed — flat amount regardless of sales
-        advertisementAmount = parseFloat(advertisementRate.toFixed(2));
-      }
 
-      const totalDue = parseFloat(
-        (royaltyAmount + advertisementAmount).toFixed(2)
-      );
+        if (excludeRanges.length > 0) {
+          periodLabel += " (Excl. Billed Dates)";
+        }
 
-      // Build period label
-      const periodLabel = buildPeriodLabel(
-        periodType,
-        actualStart,
-        end,
-        branchCreated > start
-      );
-
-      // Create record
-      const record = await RoyaltyRecord.create({
-        branchId: branch._id,
-        branchName: branch.name,
-        branchCode: branch.code,
-        branchCreatedAt: branch.createdAt,
-        periodType,
-        periodLabel,
-        startDate: actualStart,
-        endDate: end,
-        totalSales,
-        subtotal: grossSubtotal,
-        discount: grossDiscount,
-        netTotal,
-        tax: grossTax,
-        includeTax: Boolean(includeTax),
-        totalOrders,
-        royaltyRate,
-        royaltyAmount,
-        advertisementType,
-        advertisementRate,
-        advertisementAmount,
-        totalDue,
-        status: "unpaid",
-        generatedAt: new Date(),
-      });
-
-      results.generated.push({
-        branchId: branch._id,
-        branchName: branch.name,
-        periodLabel,
-        totalSales,
-        totalDue,
-      });
-    } catch (err) {
-      // Duplicate key error (race condition) — treat as skip
-      if (err.code === 11000) {
-        results.skipped.push({
+        // Create record
+        const record = await RoyaltyRecord.create({
           branchId: branch._id,
           branchName: branch.name,
-          reason: "Record already exists for this period",
+          branchCode: branch.code,
+          branchCreatedAt: branch.createdAt,
+          periodType: chunkPeriodType,
+          periodLabel,
+          startDate: actualStart,
+          endDate: chunkEnd,
+          totalSales,
+          subtotal: grossSubtotal,
+          discount: grossDiscount,
+          netTotal,
+          tax: grossTax,
+          includeTax: Boolean(includeTax),
+          totalOrders,
+          royaltyRate,
+          royaltyAmount,
+          advertisementType,
+          advertisementRate,
+          advertisementAmount,
+          totalDue,
+          status: "unpaid",
+          generatedAt: new Date(),
         });
-      } else {
-        results.errors.push({
+
+        results.generated.push({
           branchId: branch._id,
           branchName: branch.name,
-          error: err.message,
+          periodLabel,
+          totalSales,
+          totalDue,
         });
+      } catch (err) {
+        if (err.code === 11000) {
+          results.skipped.push({
+            branchId: branch._id,
+            branchName: branch.name,
+            reason: "Record already exists for this period",
+          });
+        } else {
+          results.errors.push({
+            branchId: branch._id,
+            branchName: branch.name,
+            error: err.message,
+          });
+        }
       }
     }
   }
@@ -201,12 +289,19 @@ exports.getRoyaltyRecords = async ({ branchId, status, startDate, endDate, page 
   if (status && status !== "all") filter.status = status;
 
   if (startDate || endDate) {
-    filter.startDate = {};
-    if (startDate) filter.startDate.$gte = new Date(startDate);
+    const dateConds = [];
+    if (startDate) {
+      const st = new Date(startDate);
+      st.setHours(0, 0, 0, 0);
+      dateConds.push({ endDate: { $gte: st } });
+    }
     if (endDate) {
       const ed = new Date(endDate);
       ed.setHours(23, 59, 59, 999);
-      filter.endDate = { $lte: ed };
+      dateConds.push({ startDate: { $lte: ed } });
+    }
+    if (dateConds.length > 0) {
+      filter.$and = dateConds;
     }
   }
 
@@ -230,11 +325,19 @@ exports.getRoyaltyStats = async ({ branchId, status, startDate, endDate }) => {
   if (branchId) filter.branchId = branchId;
   if (status && status !== "all") filter.status = status;
   if (startDate || endDate) {
-    if (startDate) filter.startDate = { ...filter.startDate, $gte: new Date(startDate) };
+    const dateConds = [];
+    if (startDate) {
+      const st = new Date(startDate);
+      st.setHours(0, 0, 0, 0);
+      dateConds.push({ endDate: { $gte: st } });
+    }
     if (endDate) {
       const ed = new Date(endDate);
       ed.setHours(23, 59, 59, 999);
-      filter.endDate = { ...filter.endDate, $lte: ed };
+      dateConds.push({ startDate: { $lte: ed } });
+    }
+    if (dateConds.length > 0) {
+      filter.$and = dateConds;
     }
   }
 
@@ -268,19 +371,20 @@ exports.getRoyaltyStats = async ({ branchId, status, startDate, endDate }) => {
     },
   ]);
 
-  return (
-    agg[0] || {
-      totalSales: 0,
-      totalRoyaltyDue: 0,
-      totalAdsDue: 0,
-      totalDue: 0,
-      totalCollected: 0,
-      totalPending: 0,
-      paidCount: 0,
-      unpaidCount: 0,
-      totalRecords: 0,
-    }
-  );
+  const r = agg[0] || {};
+  const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
+
+  return {
+    totalSales: round2(r.totalSales),
+    totalRoyaltyDue: round2(r.totalRoyaltyDue),
+    totalAdsDue: round2(r.totalAdsDue),
+    totalDue: round2(r.totalDue),
+    totalCollected: round2(r.totalCollected),
+    totalPending: round2(r.totalPending),
+    paidCount: r.paidCount || 0,
+    unpaidCount: r.unpaidCount || 0,
+    totalRecords: r.totalRecords || 0,
+  };
 };
 
 // GET RECORD BY ID
@@ -296,18 +400,31 @@ exports.getRoyaltyRecordDetail = async (id) => {
   if (!record) throw new Error("Royalty record not found");
 
   // Item-wise sales breakdown
-  const itemAgg = await Order.aggregate([
-    {
-      $match: {
-        branchId: record.branchId,
-        status: { $ne: "cancelled" },
-        paymentStatus: "paid",
-        createdAt: {
-          $gte: new Date(record.startDate),
-          $lte: new Date(record.endDate),
-        },
+  const startD = new Date(record.startDate);
+  const endD = new Date(record.endDate);
+  const startStr = startD.toISOString().slice(0, 10);
+  const endStr = endD.toISOString().slice(0, 10);
+
+  const detailMatch = {
+    $and: [
+      {
+        $or: [
+          { branchId: record.branchId },
+          { branchId: String(record.branchId) },
+        ],
       },
-    },
+      { status: { $ne: "cancelled" } },
+      {
+        $or: [
+          { createdAt: { $gte: startD, $lte: endD } },
+          { businessDate: { $gte: startStr, $lte: endStr } },
+        ],
+      },
+    ],
+  };
+
+  const itemAgg = await Order.aggregate([
+    { $match: detailMatch },
     { $unwind: "$items" },
     {
       $group: {
@@ -330,17 +447,7 @@ exports.getRoyaltyRecordDetail = async (id) => {
 
   // Order type breakdown
   const orderTypeAgg = await Order.aggregate([
-    {
-      $match: {
-        branchId: record.branchId,
-        status: { $ne: "cancelled" },
-        paymentStatus: "paid",
-        createdAt: {
-          $gte: new Date(record.startDate),
-          $lte: new Date(record.endDate),
-        },
-      },
-    },
+    { $match: detailMatch },
     {
       $group: {
         _id: "$orderType",
