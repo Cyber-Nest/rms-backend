@@ -12,7 +12,10 @@ const selectedModifierSchema = new mongoose.Schema(
     optionId: { type: String, required: true },
     optionName: { type: String, required: true },
     price: { type: Number, default: 0 },
+    quantity: { type: Number, default: 1 },
     isRoot: { type: Boolean, default: true },
+    parentOptionId: { type: String, default: "" },
+    parentOptionName: { type: String, default: "" },
   },
   { _id: false },
 );
